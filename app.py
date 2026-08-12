@@ -36,3 +36,4 @@ if file:
 else:
     st.warning("파일을 업로드 해주세요.")
 
+st.write("임시 테스트")
