@@ -16,9 +16,8 @@ SHIELD_DOC/
 │
 ├── model/
 │   ├── train.py                ← 이서영 (학습·비교·평가 코드)
-│   ├── predict.py              ← 이서영 (predict_confidential 함수)
-│   ├── confidential_model.pkl  ← 이서영 (학습된 모델)
-│   └── vectorizer.pkl          ← 이서영 (TF-IDF 변환기)
+│   ├── predict.py              ← 이서영 (모델 로드 + 예측)
+│   └── model.joblib            ← 이서영 (학습된 모델)
 │
 ├── tools/
 │   ├── parser.py               ← 한지웅 (문서 → 텍스트)
