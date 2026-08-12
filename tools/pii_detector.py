@@ -801,6 +801,9 @@ def detect_pii(text):
 # ==================================================
 # Secret 탐지
 # ==================================================
+# ==================================================
+# Secret 탐지
+# ==================================================
 
 def detect_secret(text):
 
@@ -809,7 +812,7 @@ def detect_secret(text):
 
 
     # ==================================================
-    # 1. API Key
+    # 1. API Key - HIGH
     # ==================================================
 
     # sk-xxxxxxxx 형태
@@ -860,17 +863,23 @@ def detect_secret(text):
     )
 
 
-    if count1 + count2 > 0:
+    api_key_count = (
+        count1 + count2
+    )
+
+
+    if api_key_count > 0:
 
         secret_found.append({
             "type": "api_key",
-            "count": count1 + count2,
+            "count": api_key_count,
+            "risk_level": "HIGH",
             "masked": True
         })
 
 
     # ==================================================
-    # 2. Password
+    # 2. Password - HIGH
     # ==================================================
 
     password_pattern = re.compile(
@@ -893,7 +902,7 @@ def detect_secret(text):
         )
 
 
-    masked_text, count = (
+    masked_text, password_count = (
         password_pattern.subn(
             mask_password,
             masked_text
@@ -901,17 +910,18 @@ def detect_secret(text):
     )
 
 
-    if count > 0:
+    if password_count > 0:
 
         secret_found.append({
             "type": "password",
-            "count": count,
+            "count": password_count,
+            "risk_level": "HIGH",
             "masked": True
         })
 
 
     # ==================================================
-    # 3. 내부 IP
+    # 3. 내부 IP - LOW
     # ==================================================
 
     ip_pattern = re.compile(
@@ -958,6 +968,7 @@ def detect_secret(text):
         secret_found.append({
             "type": "내부IP",
             "count": internal_ip_count,
+            "risk_level": "LOW",
             "masked": True
         })
 
