@@ -1,8 +1,9 @@
 import streamlit as st
 
+
 st.set_page_config(
     page_title="문서 분석 시스템 - 쉴드 독 (SHEILD DOC)",
-    page_icon='C:/Users/ez/Downloads/icons8-방패-48.png',
+    page_icon='',
     layout='wide'
 )
 
