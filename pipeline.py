@@ -18,6 +18,7 @@ SHIELD_DOC - 전체 파이프라인 (뼈대) v2
        python pipeline.py 파일1 파일2 ...   (여러 건 = batch)
 """
 
+import copy
 import json
 from datetime import datetime
 
@@ -35,11 +36,18 @@ STATUS = {}
 def _load(module_path, func_name, owner):
     try:
         mod = __import__(module_path, fromlist=[func_name])
-    except ModuleNotFoundError:
-        STATUS[func_name] = f"dummy ({owner} 대기중)"
+    except ModuleNotFoundError as e:
+        # 모듈 파일 자체가 없음 = 아직 안 만든 것
+        if getattr(e, "name", None) in (module_path, module_path.split(".")[0]):
+            STATUS[func_name] = f"dummy ({owner} 대기중)"
+        else:
+            # 파일은 있는데 그 안에서 import가 실패 (라이브러리 미설치) - 반드시 알려야 함
+            STATUS[func_name] = f"ERROR ({owner}) 라이브러리 없음: {e.name} → pip install {e.name}"
         return None
-    except Exception as e:
-        # 파일은 있는데 안 읽힘 (문법 오류, import 오류 등) - 이유를 보여줘야 함
+    except KeyboardInterrupt:
+        raise
+    except BaseException as e:
+        # 파일은 있는데 안 읽힘 (문법 오류, sys.exit 등) - 이유를 보여줘야 함
         STATUS[func_name] = f"ERROR ({owner}) {type(e).__name__}: {e}"
         return None
 
@@ -59,6 +67,14 @@ _predict_confidential = _load("model.predict",      "predict_confidential", "이
 _search_policy        = _load("tools.filesearch",   "search_policy",        "윤경은")
 _risk_engine          = _load("tools.risk_engine",  "risk_engine",          "최재용")
 _analyze_final        = _load("tools.agent",        "analyze_final",        "조정인")
+
+# 판정 경계는 tools/risk_engine.py 의 값을 따른다 (두 곳이 어긋나면 판정이 뒤집힘)
+if _risk_engine is not None:
+    try:
+        from tools.risk_engine import BLOCK_THRESHOLD as _엔진경계
+        BLOCK_THRESHOLD = _엔진경계
+    except Exception:
+        pass
 
 
 # =============================================================
@@ -87,13 +103,20 @@ def dummy_detect_pii(text):
     """
     입력: 원문
     출력: {"pii_found": list[dict], "masked_text": str}
-          - pii_found : type / count / masked
+          - pii_found : type / count / risk_level / masked
+              risk_level = "HIGH" : 주민번호, 개인휴대폰, 계좌번호, 자택주소 등
+              risk_level = "LOW"  : 업무이메일, 내선번호, 부서, 직급 등
+              ※ HIGH는 1건만 나와도 즉시 차단됩니다
           - masked_text : 개인정보를 가린 본문
-    마스킹을 아직 안 만들었으면 목록만 반환해도 됩니다 (그땐 원문이 그대로 흘러갑니다).
+    마스킹을 아직 안 만들었으면 목록만 반환해도 됩니다
+          (그땐 탐지·판정은 정상 동작하고, 화면에 뜨는 본문만 비공개 처리됩니다).
     """
     return {
-        "pii_found": [{"type": "전화번호", "count": 1, "masked": True}],
-        "masked_text": "담당자 전화번호는 010-****-5678입니다. (더미 마스킹본)",
+        "pii_found": [
+            {"type": "개인휴대폰", "count": 1, "risk_level": "HIGH", "masked": True},
+            {"type": "업무이메일", "count": 1, "risk_level": "LOW", "masked": True},
+        ],
+        "masked_text": "담당자 연락처는 010-****-5678입니다. (더미 마스킹본)",
     }
 
 
@@ -102,10 +125,11 @@ def dummy_detect_secret(text):
     입력: detect_pii가 가린 본문 (원문 아님)
     출력: {"secret_found": list[dict], "masked_text": str}
           - type은 api_key / password / 내부IP
+          - risk_level: api_key·password = "HIGH", 내부IP = "LOW"
     자기가 받은 텍스트에서 Secret만 추가로 가려서 돌려주면 됩니다.
     """
     return {
-        "secret_found": [{"type": "내부IP", "count": 1, "masked": False}],
+        "secret_found": [{"type": "내부IP", "count": 1, "risk_level": "LOW", "masked": False}],
         "masked_text": text,
     }
 
@@ -156,9 +180,39 @@ def dummy_analyze_final(doc):
 
 WARNINGS = []
 
+_실패 = object()      # 모듈 실행이 죽었음을 나타내는 표식 ("결과 없음"과 구분하기 위함)
+
 
 def _warn(msg):
     WARNINGS.append(msg)
+
+
+def _as_list(value):
+    """numpy 배열·DataFrame 등이 와도 안전하게 list인지 판정 (x or [] 쓰면 터짐)"""
+    return value if isinstance(value, list) else []
+
+
+def _as_text(value, default=""):
+    """문자열만 통과. bytes·None·숫자 등은 default"""
+    return value if isinstance(value, str) else default
+
+
+def _as_int(value, default=1):
+    """numpy 정수·문자열 숫자도 파이썬 int로 (JSON 직렬화 안전)"""
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _as_bool(value):
+    """문자열 'false'가 True가 되는 사고 방지"""
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "y", "t")
+    try:
+        return bool(value)
+    except Exception:
+        return False
 
 
 def _guess_filename(file):
@@ -191,6 +245,12 @@ def _norm_parsed(value, file):
     }
 
 
+def _본문검사(text):
+    """빈 문서는 '안전한 문서'가 아니라 '읽지 못한 문서'다."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("본문이 비어 있습니다 (이미지만 있는 PDF이거나 파싱에 실패했을 수 있습니다)")
+
+
 def _unwrap_detect(value, field, owner, current_text):
     """
     탐지 함수 출력에서 (탐지목록, 마스킹된본문) 을 꺼낸다.
@@ -198,22 +258,36 @@ def _unwrap_detect(value, field, owner, current_text):
       (A) {"pii_found": [...], "masked_text": "..."}   ← 권장 (마스킹 포함)
       (B) [...]                                        ← 목록만 (마스킹 없음)
     """
-    if isinstance(value, dict) and ("masked_text" in value or field in value):
+    if isinstance(value, dict):
         found = value.get(field)
         if found is None:                       # 키 이름을 다르게 준 경우 구제
-            for alt in ("found", "result", "items"):
+            for alt in (field, "found", "result", "items", "list"):
                 if alt in value:
-                    _warn(f"{field}: 키 이름이 '{alt}'입니다 → '{field}'로 맞춰주세요 ({owner})")
+                    if alt != field:
+                        _warn(f"{field}: 키 이름이 '{alt}'입니다 → '{field}'로 맞춰주세요 ({owner})")
                     found = value[alt]
                     break
+
         masked = value.get("masked_text")
         if masked is not None and not isinstance(masked, str):
-            _warn(f"{field}: masked_text가 문자열이 아닙니다 → 무시 ({owner})")
+            _warn(f"{field}: masked_text가 문자열이 아닙니다 ({owner})")
             masked = None
-        return _norm_list(found, field, owner), (masked if masked else current_text)
 
-    # 목록만 반환한 경우 - 마스킹은 건너뛴다
-    return _norm_list(value, field, owner), current_text
+        items = _norm_list(found, field, owner)
+        if masked:
+            return items, masked
+
+        if items:
+            _warn(f"{field}: 탐지 결과는 있는데 masked_text가 없습니다 → 본문 비공개 처리 ({owner})")
+            return items, None      # None = 마스킹 실패 (호출부가 처리)
+        return items, current_text
+
+    # 목록만 반환한 경우 - 마스킹 기능이 아직 없는 상태
+    items = _norm_list(value, field, owner)
+    if items:
+        _warn(f"{field}: masked_text가 없습니다 → 본문 비공개 처리 ({owner}: 마스킹본을 같이 반환해주세요)")
+        return items, None
+    return items, current_text
 
 
 def _norm_list(value, field, owner):
@@ -223,10 +297,11 @@ def _norm_list(value, field, owner):
         return []
     if isinstance(value, dict):
         # {"전화번호": ["010-..."]} 같은 옛 형식이 오면 새 형식으로 변환
-        _warn(f"{field}: dict가 왔습니다 → list로 변환 ({owner}: [{{'type','count','masked'}}] 형식 확인)")
+        _warn(f"{field}: dict가 왔습니다 → list로 변환 ({owner}: [{{'type','count','risk_level','masked'}}] 형식 확인)")
         return [
-            {"type": k, "count": len(v) if isinstance(v, (list, tuple)) else 1, "masked": False}
-            for k, v in value.items() if v
+            {"type": str(k), "count": len(v) if isinstance(v, (list, tuple)) else 1,
+             "risk_level": "", "masked": False}
+            for k, v in value.items() if isinstance(v, (list, tuple)) and len(v) > 0
         ]
     if not isinstance(value, list):
         _warn(f"{field}: list가 아닌 {type(value).__name__}이 왔습니다 → 빈 배열로 처리 ({owner})")
@@ -237,10 +312,19 @@ def _norm_list(value, field, owner):
         if not isinstance(item, dict):
             _warn(f"{field}: 항목이 dict가 아닙니다 → 건너뜀 ({owner})")
             continue
+
+        원본등급 = item.get("risk_level")
+        등급 = _as_text(원본등급).strip().upper()
+        if 등급 not in ("HIGH", "LOW"):
+            if 원본등급 not in (None, ""):    # 값을 주긴 했는데 HIGH/LOW가 아닌 경우
+                _warn(f"{field}: risk_level '{원본등급}'은 HIGH/LOW만 가능 ({owner})")
+            등급 = ""         # 빈 값 → Risk Engine이 항목 이름으로 등급을 추정합니다
+
         out.append({
-            "type": item.get("type", "미상"),
-            "count": item.get("count", 1),
-            "masked": bool(item.get("masked", False)),
+            "type": _as_text(item.get("type"), "미상").strip() or "미상",
+            "count": _as_int(item.get("count"), 1),
+            "risk_level": 등급,
+            "masked": _as_bool(item.get("masked", False)),
         })
     return out
 
@@ -251,44 +335,58 @@ def _norm_ml(value):
         _warn(f"ml: dict가 아닌 {type(value).__name__}이 왔습니다 → NORMAL로 처리 (이서영)")
         value = {}
 
+    # 기밀을 뜻하는 표기들 (한글/영문/숫자 문자열 전부 인정)
+    기밀표기 = {"1", "CONF", "CONFIDENTIAL", "기밀", "CONFIDENTIAL문서", "SECRET", "기밀문서"}
+
+    def _기밀인가(v):
+        t = _as_text(v).strip().upper()
+        return t in 기밀표기 or t.startswith("CONF")
+
     label = value.get("label")
     name = value.get("label_name")
 
     if isinstance(label, str):
         _warn(f"ml.label: 문자열 '{label}'이 왔습니다 → 숫자로 변환 (이서영: 0=NORMAL, 1=CONFIDENTIAL)")
-        name = name or label
-        label = 1 if label.upper().startswith("CONF") else 0
+        label = 1 if _기밀인가(label) else 0
     elif label is None:
         if name:
             _warn("ml.label: 값이 없습니다 → label_name으로 추정 (이서영)")
-            label = 1 if str(name).upper().startswith("CONF") else 0
+            label = 1 if _기밀인가(name) else 0
         else:
             _warn("ml: label이 없습니다 → NORMAL로 처리 (이서영)")
             label = 0
+    else:
+        label = _as_int(label, 0)
 
     label = 1 if label == 1 else 0
-    if not name:
-        name = "CONFIDENTIAL" if label == 1 else "NORMAL"
+
+    # label_name은 항상 label에서 다시 만든다 (둘이 어긋나면 화면과 판정이 달라짐)
+    정답이름 = "CONFIDENTIAL" if label == 1 else "NORMAL"
+    if name and _as_text(name).strip().upper() != 정답이름:
+        _warn(f"ml.label_name: '{name}' → '{정답이름}'으로 통일 (이서영: NORMAL/CONFIDENTIAL만 사용)")
+    name = 정답이름
 
     try:
         conf = float(value.get("confidence", 0))
-    except (TypeError, ValueError):
+    except Exception:
         _warn("ml.confidence: 숫자가 아닙니다 → 0으로 처리 (이서영)")
         conf = 0.0
-    if conf > 1:   # 87 처럼 퍼센트로 준 경우
+    if conf != conf or conf in (float("inf"), float("-inf")):   # NaN / 무한대
+        _warn("ml.confidence: 계산 불가 값(NaN) → 0으로 처리 (이서영)")
+        conf = 0.0
+    if 1 < conf <= 100:   # 87 처럼 퍼센트로 준 경우
         _warn(f"ml.confidence: {conf} → 0~1 소수로 변환 (이서영)")
         conf = conf / 100
-
-    evidence = value.get("evidence") or []
-    if not isinstance(evidence, list):
-        evidence = []
+    if not 0 <= conf <= 1:
+        _warn(f"ml.confidence: {conf}는 0~1 범위를 벗어남 → 잘라냄 (이서영)")
+        conf = min(max(conf, 0.0), 1.0)
 
     return {
         "label": label,
         "label_name": name,
         "confidence": round(conf, 4),
-        "evidence": evidence,
-        "model_version": value.get("model_version", ""),
+        "evidence": _as_list(value.get("evidence")),
+        "model_version": _as_text(value.get("model_version"), ""),
     }
 
 
@@ -304,51 +402,83 @@ def _norm_policy(value):
         _warn(f"policy: dict가 아닌 {type(value).__name__}이 왔습니다 → 빈 결과로 처리 (윤경은)")
         return {"refs": []}
 
-    refs = value.get("refs") or []
-    if not isinstance(refs, list):
-        refs = []
-
     out = []
-    for r in refs:
+    for r in _as_list(value.get("refs")):
         if isinstance(r, str):      # 조항 제목만 문자열로 준 경우
             out.append({"title": r, "snippet": "", "source": ""})
         elif isinstance(r, dict):
             out.append({
-                "title": r.get("title", ""),
-                "snippet": r.get("snippet", ""),
-                "source": r.get("source", ""),
+                "title": _as_text(r.get("title"), ""),
+                "snippet": _as_text(r.get("snippet"), ""),
+                "source": _as_text(r.get("source"), ""),
             })
     return {"refs": out}
+
+
+def _판정실패(사유):
+    """보안 도구는 판정이 실패하면 '허용'이 아니라 '차단'으로 떨어져야 한다."""
+    _warn(f"risk: {사유} → 안전을 위해 차단 처리 (최재용)")
+    return {"score": 100, "action": "차단", "reasons": [f"판정 실패 ({사유}) - 안전을 위해 차단"]}
 
 
 def _norm_risk(value):
     """{"score": int, "action": str, "reasons": list} 형식이어야 함."""
     if not isinstance(value, dict):
-        _warn(f"risk: dict가 아닌 {type(value).__name__}이 왔습니다 → 허용 처리 (최재용)")
-        return {"score": 0, "action": "허용", "reasons": ["판정 오류"]}
+        return _판정실패(f"dict가 아닌 {type(value).__name__}이 왔습니다")
 
-    try:
-        score = int(value.get("score", 0))
-    except (TypeError, ValueError):
+    if "score" not in value and "action" not in value:
+        return _판정실패("score도 action도 없습니다")
+
+    score = _as_int(value.get("score"), None)
+    if score is None:
+        _warn(f"risk.score: 숫자가 아닌 '{value.get('score')}' → 0으로 처리 (최재용)")
         score = 0
     score = max(0, min(score, 100))
 
-    action = value.get("action")
+    action = _as_text(value.get("action")).strip()
+    기대 = "차단" if score >= BLOCK_THRESHOLD else "허용"
     if action not in ("허용", "차단"):
-        _warn(f"risk.action: '{action}'은 허용되지 않는 값 → 점수 기준으로 다시 판정 (최재용: 허용/차단만)")
-        action = "차단" if score >= BLOCK_THRESHOLD else "허용"
+        _warn(f"risk.action: '{value.get('action')}'은 허용되지 않는 값 → 점수 기준으로 재판정 (최재용: 허용/차단만)")
+        action = 기대
+    elif action != 기대:
+        # 점수와 판정이 어긋남 - 더 안전한 쪽(차단)을 택한다
+        _warn(f"risk: {score}점인데 판정이 '{action}'입니다 (기준 {BLOCK_THRESHOLD}점) → 차단으로 통일 (최재용)")
+        action = "차단"
 
-    reasons = value.get("reasons") or []
+    reasons = value.get("reasons")
     if not isinstance(reasons, list):
-        reasons = [str(reasons)]
+        reasons = [] if reasons in (None, "") else [str(reasons)]
 
-    return {"score": score, "action": action, "reasons": [str(x) for x in reasons] or ["특이사항 없음"]}
+    return {
+        "score": score,
+        "action": action,
+        "reasons": [str(x) for x in reasons] or ["특이사항 없음"],
+    }
 
 
 # =============================================================
-# 3) Risk Engine (최재용) - 완성되면 tools/risk_engine.py 로 이동
-#    action은 "허용" / "차단" 2단계. 경계 = BLOCK_THRESHOLD
+# 3) Risk Engine 예비용 (최재용)
+#    ※ 정식 버전은 tools/risk_engine.py 입니다. 그게 있으면 그쪽이 쓰입니다.
+#      여기 있는 건 tools/risk_engine.py 가 없을 때만 쓰이는 예비 판정기이고,
+#      정식 버전과 판정이 어긋나면 안 되므로 같은 기준(등급제)을 씁니다.
 # =============================================================
+
+# ※ tools/risk_engine.py 의 HIGH_KEYWORDS / SECRET_HIGH_KEYWORDS 와 같아야 합니다
+_HIGH_PII = {"주민", "여권", "면허", "외국인등록", "계좌", "카드번호",
+             "휴대폰", "핸드폰", "개인전화", "자택", "집주소", "resident", "passport"}
+_HIGH_SECRET = {"api", "key", "token", "password", "passwd", "pwd",
+                "secret", "credential", "비밀번호", "인증키", "액세스"}
+_LOW_TOTAL_CAP = 15      # 저위험 항목 총점 상한
+
+
+def _등급(item, 고위험키워드):
+    """항목의 위험 등급 판정. risk_level이 있으면 그것을, 없으면 이름으로 추정."""
+    level = _as_text(item.get("risk_level")).strip().upper()
+    if level in ("HIGH", "LOW"):
+        return level
+    종류 = _as_text(item.get("type")).strip().lower()
+    return "HIGH" if any(k in 종류 for k in 고위험키워드) else "LOW"
+
 
 def temp_risk_engine(pii_found, secret_found, ml, policy):
     """
@@ -356,28 +486,55 @@ def temp_risk_engine(pii_found, secret_found, ml, policy):
     출력: {"score": int, "action": str, "reasons": list[str]}
     """
     score = 0
+    저위험점수 = 0
     reasons = []
+    치명적 = []
+    저위험 = []
 
-    for item in pii_found:
-        score += 30
-        reasons.append(f"{item['type']} {item['count']}건 발견")
+    for item in _as_list(pii_found):
+        if not isinstance(item, dict):
+            continue
+        종류, 건수 = item.get("type", "개인정보"), item.get("count", 1)
+        if _등급(item, _HIGH_PII) == "HIGH":
+            score += 100
+            reasons.append(f"[고위험] {종류} {건수}건 발견")
+            치명적.append(종류)
+        else:
+            저위험점수 += 5
+            저위험.append(f"{종류} {건수}건")
 
-    for item in secret_found:
-        score += 20
-        reasons.append(f"{item['type']} {item['count']}건 발견")
+    if 저위험:
+        reasons.append("[저위험] " + ", ".join(저위험))
 
-    if ml.get("label") == 1:
+    for item in _as_list(secret_found):
+        if not isinstance(item, dict):
+            continue
+        종류, 건수 = item.get("type", "인증정보"), item.get("count", 1)
+        if _등급(item, _HIGH_SECRET) == "HIGH":
+            score += 100
+            reasons.append(f"[고위험] {종류} {건수}건 발견")
+            치명적.append(종류)
+        else:
+            저위험점수 += 20
+            reasons.append(f"{종류} {건수}건 발견")
+
+    score += min(저위험점수, _LOW_TOTAL_CAP)
+
+    if (ml or {}).get("label") == 1:
         conf = ml.get("confidence", 0)
-        score += 40 if conf >= 0.8 else 25
+        score += 60 if conf >= 0.8 else 30
         reasons.append(f"ML 기밀 분류 ({conf:.0%})")
 
-    refs = policy.get("refs", [])
+    refs = _as_list((policy or {}).get("refs"))
     if refs:
-        score += 20
+        score += 25
         reasons.append(f"정책 위반 {len(refs)}건")
 
-    score = min(score, 100)
+    score = max(0, min(score, 100))
     action = "차단" if score >= BLOCK_THRESHOLD else "허용"
+
+    if 치명적:
+        reasons.insert(0, f"고위험 항목 검출로 즉시 차단 ({', '.join(dict.fromkeys(치명적))})")
 
     return {
         "score": score,
@@ -429,8 +586,22 @@ def _error_result(doc_id, filename, message):
     }
 
 
-def run_pipeline(file):
-    """문서 1건 처리 → shield_doc_common.json 형식 dict 반환"""
+def run_pipeline(file, _경고초기화=True):
+    """문서 1건 처리 → shield_doc_common.json 형식 dict 반환. 어떤 경우에도 예외를 던지지 않습니다."""
+    if _경고초기화:
+        WARNINGS.clear()      # 이전 문서의 경고가 섞이지 않도록
+    try:
+        return _run_pipeline(file)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        # 최후의 안전망 - 여기까지 오면 안 되지만, 화면이 죽는 것보다는 낫다
+        _warn(f"파이프라인 내부 오류 (최재용) {type(e).__name__}: {e}")
+        return _error_result(_new_doc_id(), _guess_filename(file),
+                             f"처리 중 오류가 발생했습니다 ({type(e).__name__})")
+
+
+def _run_pipeline(file):
     doc_id = _new_doc_id()
 
     # --- 파싱 (실패하면 여기서 종료) ---
@@ -438,40 +609,88 @@ def run_pipeline(file):
         parsed = _norm_parsed(parse_document(file), file)
         filename = parsed["filename"]
         text = parsed["text"]
-    except Exception as e:
-        return _error_result(doc_id, _guess_filename(file), f"문서를 읽을 수 없습니다: {e}")
+        _본문검사(text)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        # 예외 메시지에 문서 원문이 실려 나가지 않도록 길이를 제한한다
+        사유 = str(e).replace("\n", " ")[:120]
+        return _error_result(doc_id, _guess_filename(file),
+                             f"문서를 읽을 수 없습니다 ({type(e).__name__}: {사유})")
 
     # --- 탐지 (하나가 죽어도 나머지는 살린다) ---
-    def _safe(fn, arg, fallback, name, owner):
+    def _safe(fn, arg, name, owner):
         try:
             return fn(arg)
-        except Exception as e:
-            _warn(f"{name}: 실행 중 오류 → 결과 없음으로 처리 ({owner}) {type(e).__name__}: {e}")
-            return fallback
+        except (KeyboardInterrupt, SystemExit):
+            raise                       # Ctrl+C 는 삼키지 않는다
+        except BaseException as e:
+            _warn(f"{name}: 실행 중 오류 → 결과 없음으로 처리 ({owner}) {type(e).__name__}: {str(e)[:120]}")
+            return _실패
 
-    # 마스킹은 이어서 적용: 원문 → 개인정보 가림 → Secret 가림 → 최종 마스킹본
-    pii_found, masked = _unwrap_detect(
-        _safe(detect_pii, text, [], "detect_pii", "한지웅"), "pii_found", "한지웅", text)
+    # 분석용 텍스트와 화면 출력용 텍스트를 나눈다.
+    #   분석용 : 마스킹본이 있으면 마스킹본, 없으면 원문 (탐지가 계속 돌아야 하므로)
+    #   출력용 : 마스킹본. 마스킹 실패 시 비공개 문구 (원문이 화면·API로 새지 않도록)
+    탐지실패 = False
+    마스킹실패 = False
 
-    secret_found, masked = _unwrap_detect(
-        _safe(detect_secret, masked, [], "detect_secret", "한지웅"), "secret_found", "한지웅", masked)
+    pii결과 = _safe(detect_pii, text, "detect_pii", "한지웅")
+    if pii결과 is _실패:
+        탐지실패 = True
+        pii_found, 마스킹본 = [], None
+    else:
+        pii_found, 마스킹본 = _unwrap_detect(pii결과, "pii_found", "한지웅", text)
 
-    # 이후 단계는 마스킹본만 사용 (원문은 여기서 버림)
-    ml     = _norm_ml(_safe(predict_confidential, masked, {}, "predict_confidential", "이서영"))
-    policy = _norm_policy(_safe(search_policy, masked, {"refs": []}, "search_policy", "윤경은"))
+    분석텍스트 = 마스킹본 if 마스킹본 is not None else text
+    마스킹실패 = 마스킹본 is None
+
+    sec결과 = _safe(detect_secret, 분석텍스트, "detect_secret", "한지웅")
+    if sec결과 is _실패:
+        탐지실패 = True
+        secret_found = []
+    else:
+        secret_found, 다음마스킹본 = _unwrap_detect(sec결과, "secret_found", "한지웅", 분석텍스트)
+        if 다음마스킹본 is None:
+            마스킹실패 = True
+        else:
+            분석텍스트 = 다음마스킹본
+
+    ml결과 = _safe(predict_confidential, 분석텍스트, "predict_confidential", "이서영")
+    pol결과 = _safe(search_policy, 분석텍스트, "search_policy", "윤경은")
+    if ml결과 is _실패 or pol결과 is _실패:
+        탐지실패 = True
+    ml     = _norm_ml({} if ml결과 is _실패 else ml결과)
+    policy = _norm_policy({"refs": []} if pol결과 is _실패 else pol결과)
+
+    # 화면·API로 나가는 본문
+    출력텍스트 = "(마스킹 실패 - 본문 비공개)" if 마스킹실패 else 분석텍스트
 
     # --- 판정 ---
     try:
         risk = _norm_risk(risk_engine(pii_found, secret_found, ml, policy))
-    except Exception as e:
-        _warn(f"risk_engine: 실행 중 오류 (최재용) {type(e).__name__}: {e}")
-        risk = _norm_risk(temp_risk_engine(pii_found, secret_found, ml, policy))
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        _warn(f"risk_engine: 실행 중 오류 (최재용) {type(e).__name__}: {str(e)[:120]}")
+        try:
+            risk = _norm_risk(temp_risk_engine(pii_found, secret_found, ml, policy))
+        except Exception as e2:
+            risk = _판정실패(f"예비 판정기도 실패 {type(e2).__name__}")
+
+    # 검사 자체가 불완전했으면 "안전하다"고 말할 수 없다 → 차단으로 올린다
+    if 탐지실패 and risk["action"] == "허용":
+        _warn("일부 검사가 실패해 안전을 확인할 수 없습니다 → 차단으로 처리")
+        risk = {
+            "score": max(risk["score"], BLOCK_THRESHOLD),
+            "action": "차단",
+            "reasons": ["일부 검사 실패 - 안전을 확인할 수 없어 차단"] + risk["reasons"],
+        }
 
     doc = {
         "doc_id": doc_id,
         "filename": filename,
         "status": "success",
-        "text": masked,          # 마스킹된 본문 (원문은 저장하지 않음)
+        "text": 출력텍스트,       # 마스킹된 본문 (원문은 저장하지 않음)
         "pii_found": pii_found,
         "secret_found": secret_found,
         "ml": ml,
@@ -481,19 +700,28 @@ def run_pipeline(file):
     }
 
     # --- 설명 생성 (실패해도 판정 결과는 살린다) ---
+    # 사본을 넘긴다 - 조정인님 모듈이 doc을 수정해도 최종 JSON 형식이 깨지지 않도록
     try:
-        result = analyze_final(doc)
+        result = analyze_final(copy.deepcopy(doc))
         doc["explanation"] = result if isinstance(result, str) else str(result)
-    except Exception as e:
-        _warn(f"analyze_final: 실행 중 오류 (조정인) {type(e).__name__}: {e}")
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:
+        _warn(f"analyze_final: 실행 중 오류 (조정인) {type(e).__name__}: {str(e)[:120]}")
         doc["explanation"] = "(설명 생성 실패 - 판정 결과는 유효합니다)"
 
     return doc
 
 
+def get_warnings():
+    """이번 실행에서 발생한 형식 경고 목록 (정은환: 화면 하단에 띄우면 디버깅이 쉬워집니다)"""
+    return list(dict.fromkeys(WARNINGS))
+
+
 def run_batch(files):
     """여러 건 처리 → {"results": [...]} 형식"""
-    return {"results": [run_pipeline(f) for f in files]}
+    WARNINGS.clear()
+    return {"results": [run_pipeline(f, _경고초기화=False) for f in files]}
 
 
 # =============================================================
