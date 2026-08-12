@@ -1,0 +1,19 @@
+# 새 패키지를 쓰면 본인이 여기에 한 줄 추가하고 커밋해주세요.
+# 설치:  pip install -r requirements.txt
+
+# 화면 - 정은환
+streamlit
+
+# 문서 파싱 - 한지웅
+python-docx
+pypdf
+
+# ML 모델 - 이서영
+scikit-learn
+pandas
+numpy
+joblib
+
+# OpenAI - 조정인, 윤경은
+openai
+python-dotenv
