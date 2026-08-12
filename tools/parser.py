@@ -49,25 +49,56 @@ def parse_docx(file):
     document = Document(file)
     texts = []
 
-    # 일반 문단 추출
-    for paragraph in document.paragraphs:
-        if paragraph.text.strip():
-            texts.append(paragraph.text)
+    # XML 내부의 실제 텍스트를 가져오는 함수
+    def get_xml_text(element):
+        text = "".join(
+            node.text or ""
+            for node in element.xpath(".//w:t")
+        )
 
-    # 표 안의 텍스트 추출
+        return text.strip()
+
+    # 일반 문단
+    for paragraph in document.paragraphs:
+        text = get_xml_text(
+            paragraph._p
+        )
+
+        if text:
+            texts.append(text)
+
+    # 표
     for table in document.tables:
         for row in table.rows:
+
             row_text = []
+            seen_cells = set()
 
             for cell in row.cells:
-                if cell.text.strip():
-                    row_text.append(cell.text.strip())
+
+                # 병합 셀 중복 방지
+                cell_id = id(cell._tc)
+
+                if cell_id in seen_cells:
+                    continue
+
+                seen_cells.add(
+                    cell_id
+                )
+
+                text = get_xml_text(
+                    cell._tc
+                )
+
+                if text:
+                    row_text.append(text)
 
             if row_text:
-                texts.append(" | ".join(row_text))
+                texts.append(
+                    " | ".join(row_text)
+                )
 
     return "\n".join(texts)
-
 
 # 파일 형식을 확인하고 텍스트 추출
 def parse_document(file):
