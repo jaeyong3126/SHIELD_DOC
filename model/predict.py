@@ -9,7 +9,7 @@ from pathlib import Path
 import joblib
 
 LABEL_NAMES = {0: "NORMAL", 1: "CONFIDENTIAL"}
-_MODEL_PATH = Path(__file__).resolve().parent / "artifacts" / "model.joblib"
+_MODEL_PATH = Path(__file__).resolve().parent / "model.joblib"
 
 _state = {"loaded": False, "tfidf": None, "clf": None, "version": ""}
 
