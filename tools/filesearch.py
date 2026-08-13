@@ -13,6 +13,7 @@ VECTOR_STORE_ID = os.getenv("VECTOR_STORE_ID")
 
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
 
+
 def search_policy(text):
     try:
         response = client.responses.create(
@@ -57,6 +58,7 @@ def search_policy(text):
 """
                 }
             ],
+
             tools=[
                 {
                     "type": "file_search",
@@ -65,11 +67,18 @@ def search_policy(text):
                 }
             ],
 
-            max_tool_calls=2
+            max_tool_calls=2,
+            reasoning={"effort": "low"},
+        
         )
 
-        print("File Search usage:", response.usage)
-        print("output_text:", repr(response.output_text))
+        usage = response.usage
+
+        print("\n===== File Search Token 사용량 =====")
+        print(f"Input Tokens     : {usage.input_tokens}")
+        print(f"Output Tokens    : {usage.output_tokens}")
+        print(f"Reasoning Tokens : {usage.output_tokens_details.reasoning_tokens}")
+        print(f"Total Tokens     : {usage.total_tokens}")
 
         result_text = response.output_text.strip()
 
@@ -84,14 +93,16 @@ def search_policy(text):
             "refs": result.get("refs", [])[:3]
         }
 
-    except json.JSONDecodeError as e :
+    except json.JSONDecodeError as e:
         print("File Search JSON 변환 오류:", e)
+
         return {
-            "refs":[]
+            "refs": []
         }
-    
+
     except Exception as e:
         print("File Search 오류:", e)
+
         return {
             "refs": []
         }
