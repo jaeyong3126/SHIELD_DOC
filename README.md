@@ -21,7 +21,8 @@ SHIELD_DOC/
 │
 ├── tools/
 │   ├── parser.py               ← 한지웅 (문서 → 텍스트)
-│   ├── pii_detector.py         ← 한지웅 (개인정보·Secret 탐지 + 마스킹)
+│   ├── pii_detector.py         ← 한지웅 (개인정보·Secret Regex 탐지 + 마스킹)
+│   ├── ner_detector.py         ← 한지웅 (개인정보 NER 모델 탐지)
 │   ├── filesearch.py           ← 윤경은 (File Search 연동, 정책 조항 검색)
 │   ├── agent.py                ← 조정인 (OpenAI 종합 설명 생성)
 │   └── risk_engine.py          ← 최재용 (위험도 판정)
