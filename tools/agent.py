@@ -15,8 +15,23 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
 
 # OpenAI에 전달할 정책 근거 최대 개수
-# 검색 횟수 및 중복 제거는 filesearch.py에서 처리
 MAX_POLICY_REFS = 3
+
+
+# =========================================================
+# 2. Agent API 누적 Token Usage
+#
+# 허용 문서는 API를 호출하지 않으므로 포함되지 않음
+# 차단 문서의 OpenAI 호출만 누적
+# =========================================================
+
+TOTAL_USAGE = {
+    "api_calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "reasoning_tokens": 0,
+    "total_tokens": 0,
+}
 
 
 def _get_client():
@@ -31,7 +46,7 @@ def _get_client():
 
 
 # =========================================================
-# 2. System Prompt
+# 3. System Prompt
 # =========================================================
 
 SYSTEM_PROMPT = """
@@ -79,7 +94,9 @@ SYSTEM_PROMPT = """
 
 
 # =========================================================
-# 3. Pipeline 분석 결과 정리
+# 4. Pipeline 분석 결과 정리
+#
+# 문서 원문 text는 OpenAI에 전달하지 않음
 # =========================================================
 
 def build_analysis_context(doc):
@@ -98,7 +115,8 @@ def build_analysis_context(doc):
     if not isinstance(refs, list):
         refs = []
 
-    # Agent에서는 토큰 방지를 위해 최대 3개만 사용
+    # Agent에서는 토큰 사용 방지를 위해
+    # 정책 근거 최대 3개만 전달
     policy_for_ai = {
         "refs": refs[:MAX_POLICY_REFS]
     }
@@ -114,7 +132,7 @@ def build_analysis_context(doc):
 
 
 # =========================================================
-# 4. 차단 문서용 OpenAI Prompt
+# 5. 차단 문서용 OpenAI Prompt
 # =========================================================
 
 def _build_user_prompt(context):
@@ -166,7 +184,7 @@ Risk Engine의 score와 action을 그대로 표시한다.
 
 
 # =========================================================
-# 5. OpenAI Token Usage 출력
+# 6. OpenAI Token Usage 출력 및 누적
 # =========================================================
 
 def _print_token_usage(response):
@@ -182,18 +200,45 @@ def _print_token_usage(response):
             usage.output_tokens_details.reasoning_tokens or 0
         )
 
+    # -----------------------------------------------------
+    # 누적 사용량 저장
+    # reasoning_tokens는 output_tokens에 이미 포함되어 있으므로
+    # total_tokens 계산에 별도로 더하지 않음
+    # -----------------------------------------------------
+
+    TOTAL_USAGE["api_calls"] += 1
+    TOTAL_USAGE["input_tokens"] += usage.input_tokens
+    TOTAL_USAGE["output_tokens"] += usage.output_tokens
+    TOTAL_USAGE["reasoning_tokens"] += reasoning_tokens
+    TOTAL_USAGE["total_tokens"] += usage.total_tokens
+
+    # -----------------------------------------------------
+    # 이번 API 호출 사용량
+    # -----------------------------------------------------
+
     print("\n===== OpenAI Token Usage =====")
     print(f"Input Tokens     : {usage.input_tokens}")
     print(f"Output Tokens    : {usage.output_tokens}")
     print(f"Reasoning Tokens : {reasoning_tokens}")
     print(f"Total Tokens     : {usage.total_tokens}")
-    print("==============================")
+
+    # -----------------------------------------------------
+    # 현재까지 누적 사용량
+    # -----------------------------------------------------
+
+    print("\n===== Agent 누적 Token Usage =====")
+    print(f"API Calls        : {TOTAL_USAGE['api_calls']}")
+    print(f"Input Tokens     : {TOTAL_USAGE['input_tokens']}")
+    print(f"Output Tokens    : {TOTAL_USAGE['output_tokens']}")
+    print(f"Reasoning Tokens : {TOTAL_USAGE['reasoning_tokens']}")
+    print(f"Total Tokens     : {TOTAL_USAGE['total_tokens']}")
+    print("==================================")
 
 
 # =========================================================
-# 6. 허용 문서 설명
+# 7. 허용 문서 설명
 #
-# OpenAI API 호출 없음 → 토큰 사용 0
+# OpenAI API 호출 없음 → Agent Token 사용 0
 # =========================================================
 
 def _build_allow_explanation(context):
@@ -214,14 +259,14 @@ def _build_allow_explanation(context):
     if not reason_text:
         reason_text = "- 특이사항 없음"
 
-    # 위험 요소가 전혀 없는 정상 문서
+    # 위험 요소가 없는 정상 문서
     if score == 0:
         recommendation = (
             "현재 분석 결과 추가 확인이 필요한 "
             "위험 요소는 확인되지 않았습니다."
         )
 
-    # 일부 저위험 요소는 있지만 차단 기준 미달
+    # 일부 위험 요소는 있으나 차단 기준 미달
     else:
         recommendation = (
             "차단 기준에는 미달하였으나 탐지된 항목이 있으므로 "
@@ -242,7 +287,7 @@ def _build_allow_explanation(context):
 
 
 # =========================================================
-# 7. Pipeline에서 호출하는 최종 함수
+# 8. Pipeline에서 호출하는 최종 함수
 # =========================================================
 
 def analyze_final(doc):
@@ -250,11 +295,12 @@ def analyze_final(doc):
     허용 문서:
         고정 설명 반환
         → OpenAI API 호출 없음
-        → 토큰 사용 없음
+        → Agent Token 사용 없음
 
     차단 문서:
         OpenAI API 호출
         → 상세 차단 사유 설명
+        → Token Usage 누적
     """
 
     context = build_analysis_context(doc)
@@ -283,20 +329,19 @@ def analyze_final(doc):
             instructions=SYSTEM_PROMPT,
             input=user_prompt,
 
-            # 멀티턴 대화 상태 저장 불필요
+            # 멀티턴 상태 저장 불필요
             store=False,
 
-            # 결과 설명 작업이므로 낮은 추론 수준 사용
-            # gpt-5 / gpt-5.5 모두 호환
+            # 결과 설명이므로 낮은 추론 수준 사용
             reasoning={
                 "effort": "low"
             },
 
-            # reasoning + 실제 출력 전체 상한
+            # Reasoning + 실제 출력 전체 상한
             max_output_tokens=1600,
         )
 
-        # 차단 문서에서만 토큰 사용량 출력
+        # 이번 호출 + 누적 사용량 출력
         _print_token_usage(response)
 
         explanation = response.output_text
