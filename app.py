@@ -1,39 +1,19 @@
 import streamlit as st
-import io
+import time
 
-st.set_page_config(layout='wide')
+# 메인 화면, 분석 화면, 분석 결과 화면 분리
+main_pg = st.Page("pages/main.py", title="홈")
+analyze_pg = st.Page("pages/analyze.py", title="파일 분석")
+result_pg = st.Page("pages/result.py", title="결과 보기")
 
-st.session_state.counter = 11
+pg = st.navigation([
+    main_pg, 
+    analyze_pg,
+    result_pg
+])
 
-st.title('쉴드 독 (Sheild DOC)')
-st.write('---')
-st.write('쉴드 독은 업로드 된 파일을 분석하여 민감 개인정보 유출 가능성을 분석하고, '
-'사내의 기밀 문서 내용이 있는지 판단하는 ML 모델을 적용해 기밀 유출 방지까지 실행합니다.')
-
-# 사이드 바
-st.sidebar.title("사이드 바 목록")
-# st.sidebar.radio(
-#     "라디오 버튼",
-#     ['1', '2', '3']
-# )
-t1, t2 = st.sidebar.tabs(['1', '2'])
-with t1:
-    st.write("t1")
-with t2:
-    st.write("t2")
+pg.run()
 
 
-st.text("분석 할 파일을 선택해주세요.")
-
-# 파일 업로드 기능
-file = st.file_uploader("파일 업로드")
-
-
-if file:
-    stringio = io.StringIO(file.getvalue().decode("utf-8"))
-    text_data = stringio.read()
-    st.text(text_data)
-else:
-    st.warning("파일을 업로드 해주세요.")
 
 st.write("임시 테스트")
