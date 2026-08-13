@@ -38,7 +38,6 @@ WEAK_DEPARTMENT_SUFFIXES = (
     "부",
 )
 
-
 ALL_DEPARTMENT_SUFFIXES = (
     STRONG_DEPARTMENT_SUFFIXES
     + MEDIUM_DEPARTMENT_SUFFIXES
@@ -46,13 +45,7 @@ ALL_DEPARTMENT_SUFFIXES = (
 )
 
 
-# =========================================================
-# 장소 예외
-#
-# "~실"이라고 해서 전부 부서는 아니기 때문에
-# 명확하게 장소로 사용되는 표현은 제외한다.
-# =========================================================
-
+# 명확하게 장소 성격이 강한 단어
 PLACE_WORDS = {
     "회의실",
     "대기실",
@@ -63,23 +56,11 @@ PLACE_WORDS = {
     "전시실",
     "수유실",
     "탈의실",
-
-    # 실제 데이터 테스트에서 발견된 장소 오탐
     "협업실",
 }
 
 
-# =========================================================
-# 조직성 단어
-#
-# "실", "부"처럼 애매한 suffix를 가진 후보 중
-# 기업 조직에서 자주 사용되는 단어가 포함되면
-# 부서 가능성을 조금 높인다.
-#
-# 특정 기업의 실제 부서명을 저장하는 것이 아니라
-# 일반적인 기업 조직 표현만 사용한다.
-# =========================================================
-
+# 기업 조직명에서 자주 사용되는 일반적인 표현
 ORGANIZATION_HINT_WORDS = (
     "사업",
     "관리",
@@ -102,6 +83,12 @@ ORGANIZATION_HINT_WORDS = (
     "홍보",
     "지원",
     "혁신",
+    "연구",
+    "설계",
+    "공정",
+    "플랫폼",
+    "데이터",
+    "서비스",
 )
 
 
@@ -116,6 +103,14 @@ DEPARTMENT_CONTEXT_WORDS = (
     "근무",
     "배치",
     "인사",
+    "직원",
+    "구성원",
+    "팀원",
+    "팀장",
+    "본부장",
+    "센터장",
+    "실장",
+    "부서장",
 )
 
 
@@ -137,6 +132,33 @@ WORK_CONTEXT_WORDS = (
     "지원",
     "점검",
     "분석",
+)
+
+
+# 부서명이 아니라 시상/평가/모집 등의 분류값일 가능성이 높은 문맥
+NON_DEPARTMENT_CONTEXT_PHRASES = (
+    "추천 부문",
+    "시상 부문",
+    "포상 부문",
+    "수상 부문",
+    "평가 부문",
+    "선정 부문",
+    "참가 부문",
+    "모집 부문",
+)
+
+
+# "~팀" 형태이지만 실제 조직명보다는
+# 분류/선정 결과를 나타낼 가능성이 높은 앞부분
+NON_DEPARTMENT_PREFIX_WORDS = (
+    "모범",
+    "우수",
+    "최우수",
+    "우승",
+    "참가",
+    "후보",
+    "수상",
+    "대상",
 )
 
 
@@ -229,7 +251,7 @@ def _remove_duplicate_spans(spans):
 
         elif item.get("score", 0) > old.get(
             "score",
-            0
+            0,
         ):
             unique[key] = item
 
@@ -241,9 +263,6 @@ def _remove_duplicate_spans(spans):
 def _mask_spans(text, spans):
     """
     탐지 위치를 뒤에서부터 마스킹한다.
-
-    뒤에서부터 처리해야 앞쪽 문자열 변경으로 인해
-    뒤쪽 start/end 위치가 틀어지지 않는다.
     """
 
     masked_text = text
@@ -308,14 +327,14 @@ def _extract_ner_entities(text):
         entity_type = str(
             entity.get(
                 "entity_group",
-                ""
+                "",
             )
         ).upper()
 
         score = float(
             entity.get(
                 "score",
-                0
+                0,
             )
         )
 
@@ -403,9 +422,6 @@ def _extract_ner_entities(text):
 
     # =====================================================
     # 동일 이름 반복 등장 보완
-    #
-    # NER이 문서 안에서 한 번이라도 NAME으로 확인했다면
-    # 같은 이름이 다른 위치에 등장해도 마스킹한다.
     # =====================================================
 
     confirmed_names = {
@@ -458,9 +474,7 @@ def _get_department_suffix(candidate):
 def _extract_department_candidates(text):
     """
     특정 기업의 부서 목록을 사용하지 않고
-    조직 단위 표현을 이용해 '후보'만 추출한다.
-
-    여기서는 아직 부서로 확정하지 않는다.
+    조직 단위 표현을 이용해 후보만 추출한다.
     """
 
     suffix_pattern = "|".join(
@@ -604,7 +618,7 @@ def _get_context(
     text,
     start,
     end,
-    size=35
+    size=35,
 ):
     """
     후보 앞뒤의 문맥을 가져온다.
@@ -613,7 +627,7 @@ def _get_context(
     left = text[
         max(
             0,
-            start - size
+            start - size,
         ):
         start
     ]
@@ -622,7 +636,7 @@ def _get_context(
         end:
         min(
             len(text),
-            end + size
+            end + size,
         )
     ]
 
@@ -631,20 +645,136 @@ def _get_context(
 
 def _has_organization_hint(value):
     """
-    부서명 후보 안에 기업 조직에서 자주 사용되는
+    부서 후보 안에 기업 조직에서 자주 사용되는
     표현이 포함되어 있는지 확인한다.
-
-    예:
-        사업관리실 -> True
-        전략기획실 -> True
-        품질혁신실 -> True
-        회의실     -> False
     """
 
     return any(
         word in value
         for word in ORGANIZATION_HINT_WORDS
     )
+
+
+def _department_evidence(
+    text,
+    candidate,
+    names,
+    orgs,
+):
+    """
+    후보가 실제 조직이라는 긍정적인 근거를 정리한다.
+    """
+
+    left, right = _get_context(
+        text,
+        candidate["start"],
+        candidate["end"],
+    )
+
+    context = (
+        left
+        + right
+    )
+
+    return {
+        "organization_hint": _has_organization_hint(
+            candidate["text"]
+        ),
+        "department_context": any(
+            word in context
+            for word in DEPARTMENT_CONTEXT_WORDS
+        ),
+        "work_context": any(
+            word in context
+            for word in WORK_CONTEXT_WORDS
+        ),
+        "nearby_name": _nearby_name(
+            candidate,
+            names,
+        ),
+        "org_overlap": _overlaps_org(
+            candidate,
+            orgs,
+        ),
+    }
+
+
+def _has_positive_department_evidence(evidence):
+    """
+    suffix 자체를 제외하고
+    실제 조직이라고 볼 수 있는 근거가 하나라도 있는지 확인한다.
+    """
+
+    return any(
+        evidence.values()
+    )
+
+
+def _has_strong_department_evidence(evidence):
+    """
+    추천/시상처럼 애매한 문맥에서도
+    실제 조직이라고 판단할 만한 강한 근거가 있는지 확인한다.
+    """
+
+    return (
+        evidence["department_context"]
+        or evidence["nearby_name"]
+        or evidence["org_overlap"]
+    )
+
+
+def _is_non_department_context(
+    text,
+    candidate,
+    evidence,
+):
+    """
+    부서명이 아니라 시상/평가/추천 등의
+    분류값으로 사용된 표현인지 확인한다.
+
+    예:
+        추천 부문: 우수사원, 모범팀, 혁신아이디어
+        -> 모범팀은 부서로 처리하지 않음
+    """
+
+    value = candidate[
+        "text"
+    ]
+
+    left, right = _get_context(
+        text,
+        candidate["start"],
+        candidate["end"],
+        size=45,
+    )
+
+    # 추천 부문, 시상 부문 등 목록 안에서 등장한 경우
+    category_context = any(
+        phrase in left
+        for phrase in NON_DEPARTMENT_CONTEXT_PHRASES
+    )
+
+    # 모범팀, 우수팀, 참가팀처럼
+    # 조직명보다는 분류 표현일 가능성이 높은 경우
+    category_prefix = any(
+        value.startswith(prefix)
+        for prefix in NON_DEPARTMENT_PREFIX_WORDS
+    )
+
+    # 실제 부서라는 강한 근거가 있다면
+    # 단순 키워드만으로 제외하지 않는다.
+    if _has_strong_department_evidence(
+        evidence
+    ):
+        return False
+
+    if category_context:
+        return True
+
+    if category_prefix:
+        return True
+
+    return False
 
 
 def _department_score(
@@ -656,8 +786,8 @@ def _department_score(
     """
     부서 후보의 점수를 계산한다.
 
-    suffix 자체뿐만 아니라
-    주변 문맥, NER 이름, ORG 여부를 함께 사용한다.
+    suffix 하나만으로 결정하지 않고
+    조직성 표현, 주변 문맥, 이름, ORG 등을 함께 사용한다.
     """
 
     value = candidate[
@@ -668,12 +798,16 @@ def _department_score(
         "suffix"
     ]
 
-    # =====================================================
     # 명확한 장소는 부서 처리하지 않음
-    # =====================================================
-
     if value in PLACE_WORDS:
         return -100
+
+    evidence = _department_evidence(
+        text,
+        candidate,
+        names,
+        orgs,
+    )
 
     score = 0
 
@@ -698,23 +832,16 @@ def _department_score(
         score += 1
 
     # -----------------------------------------------------
-    # 3. 약한 suffix지만 조직성이 강한 단어가 포함된 경우
-    #
-    # 사업관리실 같은 실제 부서 미탐을 보완한다.
-    #
-    # 너무 짧은 "관리실" 같은 표현에 바로 점수를 주지 않도록
-    # 길이가 5자 이상일 때만 적용한다.
+    # 3. 조직성 표현
     # -----------------------------------------------------
 
-    if (
-        suffix in WEAK_DEPARTMENT_SUFFIXES
-        and len(value) >= 5
-        and _has_organization_hint(value)
-    ):
+    if evidence[
+        "organization_hint"
+    ]:
         score += 1
 
     # -----------------------------------------------------
-    # 4. 후보 뒤의 조사
+    # 4. 후보 뒤 조사
     # -----------------------------------------------------
 
     after = text[
@@ -742,50 +869,39 @@ def _department_score(
         score += 1
 
     # -----------------------------------------------------
-    # 5. 주변 문맥
+    # 5. 부서 문맥
     # -----------------------------------------------------
 
-    left, right = _get_context(
-        text,
-        candidate["start"],
-        candidate["end"],
-    )
-
-    context = (
-        left
-        + right
-    )
-
-    if any(
-        word in context
-        for word in DEPARTMENT_CONTEXT_WORDS
-    ):
+    if evidence[
+        "department_context"
+    ]:
         score += 2
 
-    if any(
-        word in context
-        for word in WORK_CONTEXT_WORDS
-    ):
+    # -----------------------------------------------------
+    # 6. 업무 문맥
+    # -----------------------------------------------------
+
+    if evidence[
+        "work_context"
+    ]:
         score += 1
 
     # -----------------------------------------------------
-    # 6. 근처에 사람이 있는 경우
+    # 7. 근처 사람 이름
     # -----------------------------------------------------
 
-    if _nearby_name(
-        candidate,
-        names,
-    ):
+    if evidence[
+        "nearby_name"
+    ]:
         score += 2
 
     # -----------------------------------------------------
-    # 7. NER ORG와 겹치는 경우
+    # 8. NER ORG와 겹침
     # -----------------------------------------------------
 
-    if _overlaps_org(
-        candidate,
-        orgs,
-    ):
+    if evidence[
+        "org_overlap"
+    ]:
         score += 2
 
     return score
@@ -798,8 +914,46 @@ def _is_department(
     orgs,
 ):
     """
-    suffix 종류에 따라 필요한 근거 수준을 다르게 적용한다.
+    부서 후보를 최종 판정한다.
+
+    핵심:
+    1. suffix만으로는 부서 확정하지 않음
+    2. 실제 조직이라는 긍정적 근거가 최소 하나 필요
+    3. 추천/시상/평가 문맥이면 오탐 가능성을 확인
     """
+
+    value = candidate[
+        "text"
+    ]
+
+    suffix = candidate[
+        "suffix"
+    ]
+
+    # 장소는 바로 제외
+    if value in PLACE_WORDS:
+        return False
+
+    evidence = _department_evidence(
+        text,
+        candidate,
+        names,
+        orgs,
+    )
+
+    # suffix 말고 실제 조직이라는 근거가 하나도 없으면 제외
+    if not _has_positive_department_evidence(
+        evidence
+    ):
+        return False
+
+    # 추천/시상/평가 등의 문맥이면 부서가 아닐 가능성이 높음
+    if _is_non_department_context(
+        text,
+        candidate,
+        evidence,
+    ):
+        return False
 
     score = _department_score(
         text,
@@ -808,22 +962,15 @@ def _is_department(
         orgs,
     )
 
-    suffix = candidate[
-        "suffix"
-    ]
-
-    # 팀 / 본부 / 사업부 / 파트
+    # 강한 suffix도 이제 suffix 하나만으로 통과하지 않는다.
     if suffix in STRONG_DEPARTMENT_SUFFIXES:
-        return score >= 3
+        return score >= 4
 
     # 센터 / 연구소 / 그룹
     if suffix in MEDIUM_DEPARTMENT_SUFFIXES:
-        return score >= 3
+        return score >= 4
 
     # 실 / 부
-    #
-    # threshold 자체는 낮추지 않는다.
-    # 대신 조직성 단어가 있는 경우 점수를 추가한다.
     if suffix in WEAK_DEPARTMENT_SUFFIXES:
         return score >= 4
 
@@ -941,7 +1088,7 @@ def detect_ner_pii(text):
 
     if not isinstance(
         text,
-        str
+        str,
     ):
         raise TypeError(
             "text는 문자열이어야 합니다."
@@ -992,7 +1139,7 @@ def detect_ner_pii(text):
         counts[pii_type] = (
             counts.get(
                 pii_type,
-                0
+                0,
             )
             + 1
         )
