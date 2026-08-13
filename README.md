@@ -12,7 +12,7 @@ SHIELD_DOC/
 │   ├── raw/                    ← 최율호 (원본 문서 — git 제외, 드라이브가 원본)
 │   │   └── pii_only/           ← 개인정보 전용 문서 (학습 제외, 정규식 테스트용)
 │   └── processed/
-│       └── dataset.jsonl       ← 최율호 (취합·정제 완료본)
+│       └── dataset.csv        ← 최율호 (취합·정제 완료본)
 │
 ├── model/
 │   ├── train.py                ← 이서영 (학습·비교·평가 코드)
