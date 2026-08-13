@@ -1,5 +1,5 @@
 """
-SHIELD_DOC - 전체 파이프라인 (뼈대) v2
+SHIELD_DOC - 전체 파이프라인 (뼈대) v3
 담당: 최재용
 기준 스키마: shield_doc_common.json (v2)
 
@@ -13,17 +13,82 @@ SHIELD_DOC - 전체 파이프라인 (뼈대) v2
   실행 → 상태표에서 자기 이름 찾기 → 이 파일에서 dummy_함수이름 검색
   → 그 반환값이 곧 입출력 정답지입니다. 키 이름을 똑같이 맞춰주세요.
 
-실행:  python pipeline.py            (샘플로 한 바퀴)
-       python pipeline.py 파일경로   (실제 파일로 한 바퀴)
-       python pipeline.py 파일1 파일2 ...   (여러 건 = batch)
+실행:  python pipeline_v3.py            (data/ 안의 샘플 파일 1건으로 한 바퀴)
+       python pipeline_v3.py 파일경로   (실제 파일로 한 바퀴)
+       python pipeline_v3.py 파일1 파일2 ...   (여러 건 = batch)
+
+=============================================================================
+[v2 → v3 변경점]  (최재용)
+
+ 1. 마스킹 실패 시 정책 검색(외부 OpenAI 호출)을 건너뜀
+    detect_pii가 죽으면 원문에 개인정보가 남은 채로 search_policy에
+    들어가 외부 API로 나갔습니다. detect_secret이 성공해도 그건
+    Secret만 가린 것이라 PII는 그대로 남습니다
+
+ 2. 판정 기준을 risk_engine에서 통째로 가져옵니다.
+    v2는 BLOCK_THRESHOLD만 import하고 WEIGHTS·키워드는 하드코딩 복사본을
+    썼습니다. 이제 import에 실패할 때만 아래 기본값을 씁니다.
+
+ 3. 저위험 상한을 pii_low에만 적용합니다 (risk_engine v3와 동일).
+    secret_low(20)가 상한(15)보다 커서 도달 불가능한 죽은 값이었습니다.
+
+ 4. _as_int가 "50.7" 같은 실수 문자열에서 죽지 않습니다.
+    v2는 int("50.7")이 ValueError → score가 0이 되어 "차단 (0점)"처럼
+    점수와 판정이 어긋나 표시됐습니다.
+
+ 5. ml.label이 0/1이 아니면 경고를 남깁니다.
+    v2는 label=2를 경고 없이 NORMAL로 바꿨습니다.
+
+ 6. 점수는 낮은데 엔진이 '차단'을 준 정당한 경우엔 경고하지 않습니다.
+    위험한 방향(점수는 높은데 '허용')일 때만 경고합니다.
+
+ 7. 인자 없이 실행하면 data/ 밑 샘플 파일을 씁니다.
+    v2는 run_pipeline(None)을 불러 status="error"가 났습니다.
+
+ 8. ML 모듈이 죽었을 때 "이서영: label이 없습니다" 형식 경고가
+    중복으로 뜨던 것을 없앴습니다 (크래시 경고만 남습니다).
+=============================================================================
 """
 
 import copy
+import importlib
 import json
 from datetime import datetime
+from pathlib import Path
 
-# 판정 경계 - 오후에 실제 점수 분포 보고 조정 (최재용)
+# 정식 판정 엔진 모듈 경로
+_RISK_MODULE = "tools.risk_engine"
+
+# 인자 없이 실행할 때 쓸 샘플 문서 폴더
+_샘플폴더 = Path(__file__).resolve().parent / "data" / "raw" / "hr_mock_docs"
+
+
+# =============================================================
+# 0) 판정 기준 기본값
+#    ※ 정식 값은 tools/risk_engine*.py 에 있습니다.
+#      아래는 그 모듈을 못 읽었을 때만 쓰이는 예비값입니다.
+#      실행하면 상태표에 어느 쪽이 쓰였는지 표시됩니다.
+# =============================================================
+
 BLOCK_THRESHOLD = 50
+
+WEIGHTS = {
+    "pii_high": 100,
+    "pii_low": 5,
+    "secret_high": 100,
+    "secret_low": 20,
+    "ml_high": 60,
+    "ml_low": 30,
+    "policy": 25,
+}
+
+_ML_CONFIDENT = 0.8
+_PII_LOW_CAP = 15        # 저위험 '개인정보'에만 적용 (인증정보는 상한 밖)
+
+_HIGH_PII = {"주민", "여권", "면허", "외국인등록", "계좌", "카드번호",
+             "휴대폰", "핸드폰", "개인전화", "자택", "집주소", "resident", "passport"}
+_HIGH_SECRET = {"api", "key", "token", "password", "passwd", "pwd",
+                "secret", "credential", "비밀번호", "인증키", "액세스"}
 
 
 # =============================================================
@@ -31,6 +96,7 @@ BLOCK_THRESHOLD = 50
 # =============================================================
 
 STATUS = {}
+_기준메모 = []          # 판정 기준을 어디서 가져왔는지 (상태표 아래에 표시)
 
 
 def _load(module_path, func_name, owner):
@@ -65,16 +131,78 @@ _detect_pii           = _load("tools.pii_detector", "detect_pii",           "한
 _detect_secret        = _load("tools.pii_detector", "detect_secret",        "한지웅")
 _predict_confidential = _load("model.predict",      "predict_confidential", "이서영")
 _search_policy        = _load("tools.filesearch",   "search_policy",        "윤경은")
-_risk_engine          = _load("tools.risk_engine",  "risk_engine",          "최재용")
+_risk_engine          = _load(_RISK_MODULE,         "risk_engine",          "최재용")
 _analyze_final        = _load("tools.agent",        "analyze_final",        "조정인")
 
-# 판정 경계는 tools/risk_engine.py 의 값을 따른다 (두 곳이 어긋나면 판정이 뒤집힘)
+
+# -------------------------------------------------------------
+# 판정 기준 동기화
+#   두 곳에 같은 숫자를 적어두면 언젠가 어긋나고, 어긋나면 판정이 뒤집힙니다.
+#   그래서 엔진 모듈이 읽히면 기준을 통째로 그쪽에서 가져옵니다.
+#   ※ 여기서는 _warn()을 쓸 수 없습니다 (아직 정의 전이고, WARNINGS는
+#     문서마다 비워지므로 로드 시점 메시지가 사라집니다). _기준메모에 남깁니다.
+# -------------------------------------------------------------
+
+def _수치인가(v, 최소, 최대):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and 최소 <= v <= 최대
+
+
 if _risk_engine is not None:
     try:
-        from tools.risk_engine import BLOCK_THRESHOLD as _엔진경계
-        BLOCK_THRESHOLD = _엔진경계
-    except Exception:
-        pass
+        _엔진 = importlib.import_module(_RISK_MODULE)
+    except Exception as e:
+        _엔진 = None
+        _기준메모.append(f"! {_RISK_MODULE} 상수를 못 읽었습니다 ({type(e).__name__}) → pipeline 기본값 사용")
+
+    if _엔진 is not None:
+        # 차단 경계
+        _값 = getattr(_엔진, "BLOCK_THRESHOLD", None)
+        if _수치인가(_값, 1, 100):
+            BLOCK_THRESHOLD = int(_값)
+        else:
+            _기준메모.append(f"! BLOCK_THRESHOLD를 못 읽었습니다 ({_값!r}) → {BLOCK_THRESHOLD} 유지")
+
+        # 가중치
+        _값 = getattr(_엔진, "WEIGHTS", None)
+        if isinstance(_값, dict):
+            _빠짐 = [k for k in WEIGHTS if not _수치인가(_값.get(k), 0, 1000)]
+            if _빠짐:
+                _기준메모.append(f"! WEIGHTS에서 못 읽은 항목 {_빠짐} → 그 항목만 기본값 사용")
+            WEIGHTS = {k: (int(_값[k]) if k not in _빠짐 else v) for k, v in WEIGHTS.items()}
+        else:
+            _기준메모.append("! WEIGHTS를 못 읽었습니다 → 기본값 사용")
+
+        # 저위험 개인정보 상한 (v3: PII_LOW_CAP / v2: LOW_TOTAL_CAP)
+        _값 = getattr(_엔진, "PII_LOW_CAP", getattr(_엔진, "LOW_TOTAL_CAP", None))
+        if _수치인가(_값, 0, 100):
+            _PII_LOW_CAP = int(_값)
+        else:
+            _기준메모.append(f"! 저위험 상한을 못 읽었습니다 ({_값!r}) → {_PII_LOW_CAP} 유지")
+
+        # ML 확신 경계
+        _값 = getattr(_엔진, "ML_CONFIDENT", None)
+        if _수치인가(_값, 0, 1):
+            _ML_CONFIDENT = float(_값)
+        else:
+            _기준메모.append(f"! ML_CONFIDENT를 못 읽었습니다 ({_값!r}) → {_ML_CONFIDENT} 유지")
+
+        # 고위험 키워드
+        _값 = getattr(_엔진, "HIGH_KEYWORDS", None)
+        if isinstance(_값, (set, frozenset, list, tuple)) and _값:
+            _HIGH_PII = {str(k).strip().lower() for k in _값}
+        else:
+            _기준메모.append("! HIGH_KEYWORDS를 못 읽었습니다 → 기본값 사용")
+
+        _값 = getattr(_엔진, "SECRET_HIGH_KEYWORDS", None)
+        if isinstance(_값, (set, frozenset, list, tuple)) and _값:
+            _HIGH_SECRET = {str(k).strip().lower() for k in _값}
+        else:
+            _기준메모.append("! SECRET_HIGH_KEYWORDS를 못 읽었습니다 → 기본값 사용")
+
+        if not _기준메모:
+            _기준메모.append(f"판정 기준을 {_RISK_MODULE} 에서 가져왔습니다 (차단 {BLOCK_THRESHOLD}점)")
+else:
+    _기준메모.append(f"판정 기준: pipeline 기본값 (차단 {BLOCK_THRESHOLD}점) - {_RISK_MODULE} 미연결")
 
 
 # =============================================================
@@ -108,8 +236,13 @@ def dummy_detect_pii(text):
               risk_level = "LOW"  : 업무이메일, 내선번호, 부서, 직급 등
               ※ HIGH는 1건만 나와도 즉시 차단됩니다
           - masked_text : 개인정보를 가린 본문
-    마스킹을 아직 안 만들었으면 목록만 반환해도 됩니다
-          (그땐 탐지·판정은 정상 동작하고, 화면에 뜨는 본문만 비공개 처리됩니다).
+
+    ※ masked_text는 반드시 같이 반환해주세요. (v3부터 중요해졌습니다)
+      목록만 반환하면 파이프라인이 '마스킹 실패'로 보고 이렇게 처리합니다.
+        · 화면에 뜨는 본문 → 비공개 문구로 대체
+        · 정책 검색(외부 API 호출) → 원문 유출 방지를 위해 생략
+        · 판정 → 안전을 확인할 수 없으므로 '차단'으로 올림
+      즉 마스킹을 빼면 모든 문서가 차단됩니다.
     """
     return {
         "pii_found": [
@@ -127,18 +260,25 @@ def dummy_detect_secret(text):
           - type은 api_key / password / 내부IP
           - risk_level: api_key·password = "HIGH", 내부IP = "LOW"
     자기가 받은 텍스트에서 Secret만 추가로 가려서 돌려주면 됩니다.
+
+    ※ 이 함수가 성공해도 detect_pii가 실패했다면 본문에는 개인정보가
+      남아 있습니다. 파이프라인은 그 상태를 계속 '마스킹 실패'로 봅니다.
     """
     return {
-        "secret_found": [{"type": "내부IP", "count": 1, "risk_level": "LOW", "masked": False}],
+        "secret_found": [{"type": "내부IP", "count": 1, "risk_level": "LOW", "masked": True}],
         "masked_text": text,
     }
 
 
 def dummy_predict_confidential(text):
     """
-    출력: label 0=NORMAL / 1=CONFIDENTIAL
+    출력: label 0=NORMAL / 1=CONFIDENTIAL  (0과 1만 씁니다)
           confidence 0~1 소수
           evidence, model_version 은 선택 (못 채우면 [] 와 "")
+
+    ※ 다중 분류(label 2 이상)로 바꾸시려면 파이프라인의 _norm_ml 과
+      risk_engine 도 같이 고쳐야 합니다. 지금 그대로 2를 주면
+      경고를 남기고 NORMAL(0)로 처리됩니다.
     """
     return {
         "label": 1,
@@ -153,7 +293,12 @@ def dummy_predict_confidential(text):
 
 
 def dummy_search_policy(text):
-    """출력: {"refs": [...]} — 위반 없으면 refs: []"""
+    """
+    출력: {"refs": [...]} — 위반 없으면 refs: []
+
+    ※ 이 함수는 본문을 외부 API로 보냅니다. 파이프라인은 마스킹이
+      성공한 본문만 넘깁니다. 마스킹이 실패하면 호출 자체를 건너뜁니다.
+    """
     return {
         "refs": [
             {
@@ -168,6 +313,7 @@ def dummy_search_policy(text):
 def dummy_analyze_final(doc):
     """
     입력: 지금까지 채워진 결과 dict 전체 (text, pii_found, ml, policy, risk 포함)
+          ※ doc["text"]는 마스킹본입니다. 마스킹 실패 시엔 비공개 문구가 들어옵니다.
     출력: 문자열 하나 (설명문)
     """
     return "더미 설명입니다. 조정인님 모듈이 연결되면 실제 분석 문장이 들어갑니다."
@@ -198,9 +344,19 @@ def _as_text(value, default=""):
 
 
 def _as_int(value, default=1):
-    """numpy 정수·문자열 숫자도 파이썬 int로 (JSON 직렬화 안전)"""
+    """
+    numpy 정수·'50'·'50.7' 같은 문자열 숫자도 파이썬 int로 (JSON 직렬화 안전).
+      v2는 int("50.7")에서 ValueError가 나 default로 떨어졌습니다.
+      점수에서 이러면 "차단 (0점)"처럼 점수와 판정이 어긋나 표시됩니다.
+    """
+    if isinstance(value, bool):        # True가 1점/1건으로 둔갑하는 사고 방지
+        return default
     try:
         return int(value)
+    except Exception:
+        pass
+    try:
+        return int(float(value))       # "50.7" / "  42 " 같은 경우
     except Exception:
         return default
 
@@ -329,6 +485,16 @@ def _norm_list(value, field, owner):
     return out
 
 
+def _빈_ml():
+    """
+    ML 모듈이 죽었을 때 쓰는 기본값.
+      _norm_ml({}) 를 쓰면 "label이 없습니다 (이서영)" 형식 경고가 덧붙어서,
+      크래시인데 이서영님이 형식을 틀린 것처럼 보였습니다. 그래서 따로 만듭니다.
+    """
+    return {"label": 0, "label_name": "NORMAL", "confidence": 0.0,
+            "evidence": [], "model_version": ""}
+
+
 def _norm_ml(value):
     """label은 0/1 정수여야 함. 문자열로 와도 살려낸다. (제일 자주 나는 실수)"""
     if not isinstance(value, dict):
@@ -348,6 +514,10 @@ def _norm_ml(value):
     if isinstance(label, str):
         _warn(f"ml.label: 문자열 '{label}'이 왔습니다 → 숫자로 변환 (이서영: 0=NORMAL, 1=CONFIDENTIAL)")
         label = 1 if _기밀인가(label) else 0
+    elif isinstance(label, bool):
+        # bool은 int의 하위형이라 아래 _as_int로 흘려보내면 안 된다 (_as_int는 bool을 거부함)
+        _warn(f"ml.label: {label}이 왔습니다 → {int(label)}로 변환 (이서영: 0/1 정수를 주세요)")
+        label = int(label)
     elif label is None:
         if name:
             _warn("ml.label: 값이 없습니다 → label_name으로 추정 (이서영)")
@@ -356,7 +526,16 @@ def _norm_ml(value):
             _warn("ml: label이 없습니다 → NORMAL로 처리 (이서영)")
             label = 0
     else:
-        label = _as_int(label, 0)
+        원본label = label
+        # default를 None으로 둬야 "숫자로 바꿀 수 없는 값"도 아래 경고에 걸린다.
+        # (default=0으로 두면 label=[] 같은 값이 조용히 NORMAL이 됨)
+        label = _as_int(label, None)
+        # v2는 여기서 조용히 0으로 깎았습니다. 다중 분류로 바뀌면 아무도 모르게
+        # 전부 정상 판정이 되므로, 0/1이 아니면 반드시 알립니다.
+        if label not in (0, 1):
+            _warn(f"ml.label: {원본label!r}은 0/1만 가능합니다 → NORMAL(0)로 처리 "
+                  f"(이서영: 다중 분류로 바꾸셨다면 파이프라인·risk_engine도 같이 고쳐야 합니다)")
+            label = 0
 
     label = 1 if label == 1 else 0
 
@@ -437,13 +616,17 @@ def _norm_risk(value):
 
     action = _as_text(value.get("action")).strip()
     기대 = "차단" if score >= BLOCK_THRESHOLD else "허용"
+
     if action not in ("허용", "차단"):
         _warn(f"risk.action: '{value.get('action')}'은 허용되지 않는 값 → 점수 기준으로 재판정 (최재용: 허용/차단만)")
         action = 기대
-    elif action != 기대:
-        # 점수와 판정이 어긋남 - 더 안전한 쪽(차단)을 택한다
-        _warn(f"risk: {score}점인데 판정이 '{action}'입니다 (기준 {BLOCK_THRESHOLD}점) → 차단으로 통일 (최재용)")
+    elif action == "허용" and 기대 == "차단":
+        # 위험한 방향의 불일치 - 점수가 차단인데 허용이 나왔다. 안전한 쪽으로 뒤집는다.
+        _warn(f"risk: {score}점인데 판정이 '허용'입니다 (기준 {BLOCK_THRESHOLD}점) → 차단으로 통일 (최재용)")
         action = "차단"
+    # action == "차단" 이고 점수는 낮은 경우:
+    #   점수와 무관한 즉시 차단 규칙이 있을 수 있는 정당한 상황이므로 그대로 존중한다.
+    #   (v2는 여기서도 "차단으로 통일" 경고를 띄웠습니다)
 
     reasons = value.get("reasons")
     if not isinstance(reasons, list):
@@ -458,18 +641,11 @@ def _norm_risk(value):
 
 # =============================================================
 # 3) Risk Engine 예비용 (최재용)
-#    ※ 정식 버전은 tools/risk_engine.py 입니다. 그게 있으면 그쪽이 쓰입니다.
-#      여기 있는 건 tools/risk_engine.py 가 없을 때만 쓰이는 예비 판정기이고,
-#      정식 버전과 판정이 어긋나면 안 되므로 같은 기준(등급제)을 씁니다.
+#    ※ 정식 버전은 tools/risk_engine*.py 입니다. 그게 있으면 그쪽이 쓰입니다.
+#      여기 있는 건 그 파일을 못 읽었을 때만 쓰이는 예비 판정기입니다.
+#      가중치·키워드는 위쪽에서 엔진 값으로 덮어씌워지므로
+#      숫자를 여기에 또 적지 않습니다 (v2는 하드코딩 복사본이었습니다).
 # =============================================================
-
-# ※ tools/risk_engine.py 의 HIGH_KEYWORDS / SECRET_HIGH_KEYWORDS 와 같아야 합니다
-_HIGH_PII = {"주민", "여권", "면허", "외국인등록", "계좌", "카드번호",
-             "휴대폰", "핸드폰", "개인전화", "자택", "집주소", "resident", "passport"}
-_HIGH_SECRET = {"api", "key", "token", "password", "passwd", "pwd",
-                "secret", "credential", "비밀번호", "인증키", "액세스"}
-_LOW_TOTAL_CAP = 15      # 저위험 항목 총점 상한
-
 
 def _등급(item, 고위험키워드):
     """항목의 위험 등급 판정. risk_level이 있으면 그것을, 없으면 이름으로 추정."""
@@ -486,51 +662,60 @@ def temp_risk_engine(pii_found, secret_found, ml, policy):
     출력: {"score": int, "action": str, "reasons": list[str]}
     """
     score = 0
-    저위험점수 = 0
+    pii저위험 = 0            # 상한 적용 대상
+    secret저위험 = 0         # 상한 미적용
     reasons = []
     치명적 = []
-    저위험 = []
+    저위험목록 = []
 
     for item in _as_list(pii_found):
         if not isinstance(item, dict):
             continue
         종류, 건수 = item.get("type", "개인정보"), item.get("count", 1)
         if _등급(item, _HIGH_PII) == "HIGH":
-            score += 100
+            score += WEIGHTS["pii_high"]
             reasons.append(f"[고위험] {종류} {건수}건 발견")
             치명적.append(종류)
         else:
-            저위험점수 += 5
-            저위험.append(f"{종류} {건수}건")
+            pii저위험 += WEIGHTS["pii_low"]
+            저위험목록.append(f"{종류} {건수}건")
 
-    if 저위험:
-        reasons.append("[저위험] " + ", ".join(저위험))
+    if 저위험목록:
+        reasons.append("[저위험] " + ", ".join(저위험목록))
 
     for item in _as_list(secret_found):
         if not isinstance(item, dict):
             continue
         종류, 건수 = item.get("type", "인증정보"), item.get("count", 1)
         if _등급(item, _HIGH_SECRET) == "HIGH":
-            score += 100
+            score += WEIGHTS["secret_high"]
             reasons.append(f"[고위험] {종류} {건수}건 발견")
             치명적.append(종류)
         else:
-            저위험점수 += 20
+            secret저위험 += WEIGHTS["secret_low"]
             reasons.append(f"{종류} {건수}건 발견")
 
-    score += min(저위험점수, _LOW_TOTAL_CAP)
+    # 상한은 저위험 '개인정보'에만 (직원명부 이메일 10개로 차단되면 안 됨).
+    # 저위험 '인증정보'는 상한 밖 - risk_engine v3와 같은 규칙.
+    score += min(pii저위험, _PII_LOW_CAP)
+    score += secret저위험
 
-    if (ml or {}).get("label") == 1:
-        conf = ml.get("confidence", 0)
-        score += 60 if conf >= 0.8 else 30
+    if isinstance(ml, dict) and ml.get("label") == 1:
+        try:
+            conf = float(ml.get("confidence", 0))
+        except (TypeError, ValueError):
+            conf = 0.0
+        score += WEIGHTS["ml_high"] if conf >= _ML_CONFIDENT else WEIGHTS["ml_low"]
         reasons.append(f"ML 기밀 분류 ({conf:.0%})")
 
-    refs = _as_list((policy or {}).get("refs"))
+    # dict만 센다 - 정식 엔진(_목록)과 계산이 어긋나지 않도록
+    refs = [r for r in _as_list((policy or {}).get("refs") if isinstance(policy, dict) else None)
+            if isinstance(r, dict)]
     if refs:
-        score += 25
+        score += WEIGHTS["policy"]
         reasons.append(f"정책 위반 {len(refs)}건")
 
-    score = max(0, min(score, 100))
+    score = max(0, min(int(score), 100))
     action = "차단" if score >= BLOCK_THRESHOLD else "허용"
 
     if 치명적:
@@ -556,7 +741,7 @@ analyze_final        = _analyze_final        or dummy_analyze_final
 # =============================================================
 # 4) 메인 흐름
 #    정은환: app.py 에서 이것만 부르면 됩니다.
-#            from pipeline import run_pipeline
+#            from pipeline_v3 import run_pipeline
 #            result = run_pipeline(uploaded_file)   # dict 반환
 # =============================================================
 
@@ -632,7 +817,6 @@ def _run_pipeline(file):
     #   분석용 : 마스킹본이 있으면 마스킹본, 없으면 원문 (탐지가 계속 돌아야 하므로)
     #   출력용 : 마스킹본. 마스킹 실패 시 비공개 문구 (원문이 화면·API로 새지 않도록)
     탐지실패 = False
-    마스킹실패 = False
 
     pii결과 = _safe(detect_pii, text, "detect_pii", "한지웅")
     if pii결과 is _실패:
@@ -648,18 +832,35 @@ def _run_pipeline(file):
     if sec결과 is _실패:
         탐지실패 = True
         secret_found = []
+        # detect_secret이 죽으면 API 키·비밀번호·내부IP가 가려지지 않은 상태다.
+        # detect_pii가 성공했어도 본문은 여전히 '마스킹 미완료'로 봐야 한다.
+        # (v2는 여기서 마스킹실패를 안 세워서 인증정보가 외부 API로 나갔습니다)
+        마스킹실패 = True
     else:
         secret_found, 다음마스킹본 = _unwrap_detect(sec결과, "secret_found", "한지웅", 분석텍스트)
         if 다음마스킹본 is None:
             마스킹실패 = True
         else:
             분석텍스트 = 다음마스킹본
+    # ※ 여기서 마스킹실패가 True면 분석텍스트에는 아직 개인정보가 남아 있다.
+    #   detect_secret이 성공해도 그건 Secret만 가린 것이라 PII는 그대로다.
 
+    # ML은 로컬에서 도는 모듈이라 원문을 봐도 된다 (model/model.joblib).
+    #   ※ 이서영님이 외부 임베딩 API로 바꾸면 아래 정책 검색과 같은 게이트가 필요합니다.
     ml결과 = _safe(predict_confidential, 분석텍스트, "predict_confidential", "이서영")
-    pol결과 = _safe(search_policy, 분석텍스트, "search_policy", "윤경은")
+
+    # 정책 검색은 본문을 외부 API(OpenAI)로 보낸다.
+    # 마스킹이 실패한 상태면 원문이 그대로 나가므로 호출하지 않는다.
+    if 마스킹실패:
+        _warn("search_policy: 마스킹 실패 → 정책 검색을 건너뜁니다 "
+              "(원문이 외부 API로 나가지 않도록 / 판정은 차단으로 올라갑니다)")
+        pol결과 = _실패
+    else:
+        pol결과 = _safe(search_policy, 분석텍스트, "search_policy", "윤경은")
+
     if ml결과 is _실패 or pol결과 is _실패:
         탐지실패 = True
-    ml     = _norm_ml({} if ml결과 is _실패 else ml결과)
+    ml     = _빈_ml() if ml결과 is _실패 else _norm_ml(ml결과)
     policy = _norm_policy({"refs": []} if pol결과 is _실패 else pol결과)
 
     # 화면·API로 나가는 본문
@@ -714,8 +915,15 @@ def _run_pipeline(file):
 
 
 def get_warnings():
-    """이번 실행에서 발생한 형식 경고 목록 (정은환: 화면 하단에 띄우면 디버깅이 쉬워집니다)"""
-    return list(dict.fromkeys(WARNINGS))
+    """
+    이번 실행에서 발생한 형식 경고 목록 (정은환: 화면 하단에 띄우면 디버깅이 쉬워집니다)
+
+    판정 기준 동기화 실패(_기준메모)도 같이 넣습니다.
+    이건 모듈을 읽어들일 때 한 번 생기는 문제라 WARNINGS에는 안 담기는데,
+    Streamlit에서는 터미널 상태표를 볼 수 없어 그냥 묻혀버리기 때문입니다.
+    """
+    기준경고 = [m for m in _기준메모 if m.startswith("!")]
+    return list(dict.fromkeys(기준경고 + WARNINGS))
 
 
 def run_batch(files):
@@ -728,15 +936,27 @@ def run_batch(files):
 # 5) 단독 실행 - 터미널 확인용
 # =============================================================
 
+def _샘플파일():
+    """인자 없이 실행할 때 쓸 샘플 파일 하나 (없으면 None)"""
+    if not _샘플폴더.is_dir():
+        return None
+    for p in sorted(_샘플폴더.iterdir()):
+        if p.is_file() and p.suffix.lower() in (".txt", ".pdf", ".docx"):
+            return str(p)
+    return None
+
+
 def _print_status():
     print("=" * 60)
-    print(" SHIELD_DOC 파이프라인 v2 - 모듈 연결 상태")
+    print(" SHIELD_DOC 파이프라인 v3 - 모듈 연결 상태")
     print("=" * 60)
     for name, state in STATUS.items():
         mark = "O" if state.startswith("REAL") else ("!" if state.startswith("ERROR") else "-")
         print(f" [{mark}] {name:<22} {state}")
     if _risk_engine is None:
-        print("     ※ risk_engine은 pipeline.py 안의 임시 버전이 동작 중입니다 (최재용)")
+        print("     ※ risk_engine은 pipeline_v3.py 안의 임시 버전이 동작 중입니다 (최재용)")
+    for 메모 in _기준메모:
+        print(f"     {메모}")
     print("=" * 60)
 
 
@@ -781,7 +1001,14 @@ if __name__ == "__main__":
         for r in out["results"]:
             _print_result(r)
     else:
-        out = run_pipeline(args[0] if args else None)
+        대상 = args[0] if args else _샘플파일()
+        if 대상 is None:
+            print(f"\n샘플 파일을 찾지 못했습니다 ({_샘플폴더})")
+            print("파일 경로를 인자로 주세요:  python pipeline_v3.py 파일경로")
+            sys.exit(1)
+        if not args:
+            print(f"\n(인자 없음 → 샘플 파일 사용: {대상})")
+        out = run_pipeline(대상)
         _print_result(out)
 
     _print_warnings()
