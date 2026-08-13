@@ -64,7 +64,8 @@ def search_policy(text):
                     "max_num_results": 3
                 }
             ],
-            # max_output_tokens=600   # gpt가 불필요한 긴 답 생성하지 않게 제한
+
+            max_tool_calls=2
         )
 
         print("File Search usage:", response.usage)
@@ -95,12 +96,3 @@ def search_policy(text):
             "refs": []
         }
 
-if __name__ == "__main__":
-    test_text = """
-    이번 주 사내 구내 식당 운영시간 안내입니다. 
-    점심시간은 오전 11시 30분 부터 오후 1시 30분까지입니다.
-    """
-
-    result = search_policy(test_text)
-
-    print("최종 반환값:", result)
