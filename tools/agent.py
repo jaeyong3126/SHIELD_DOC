@@ -161,8 +161,6 @@ def _deduplicate_policy_refs(policy):
 # =========================================================
 # T080 / T081
 # PII + Secret + ML + Policy + Risk 결과 통합
-#
-# 문서 text 자체는 토큰 절감을 위해 OpenAI에 전달하지 않음
 # =========================================================
 
 def build_analysis_context(doc):
