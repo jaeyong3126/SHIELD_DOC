@@ -383,4 +383,4 @@ def analyze_final(doc):
     except Exception as e:
         raise RuntimeError(
             f"OpenAI 설명 생성 실패 ({type(e).__name__})"
-        ) from e
+        ) from
