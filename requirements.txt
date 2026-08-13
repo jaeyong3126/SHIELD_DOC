@@ -7,6 +7,8 @@ streamlit
 # 문서 파싱 - 한지웅
 python-docx
 pypdf
+transformers
+torch
 
 # ML 모델 - 이서영
 scikit-learn

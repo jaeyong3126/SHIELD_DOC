@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from pypdf import PdfReader
 from docx import Document
@@ -24,6 +25,42 @@ def parse_txt(file):
     raise ValueError("TXT 파일의 인코딩을 읽을 수 없습니다.")
 
 
+# PDF 파싱 과정에서 생기는 불필요한 공백 정리
+def clean_pdf_text(text):
+    # 특수 공백 제거
+    text = text.replace("\u00a0", " ")
+    text = text.replace("\u200b", "")
+
+    # 같은 줄 안의 연속 공백 정리
+    text = re.sub(r"[ \t]{2,}", " ", text)
+
+    # 이메일의 @, . 주변에 생긴 공백 보정
+    email_pattern = re.compile(
+        r"(?P<local>[A-Za-z0-9._%+-]+)"
+        r"\s*@\s*"
+        r"(?P<domain>"
+        r"[A-Za-z0-9-]+"
+        r"(?:\s*\.\s*[A-Za-z0-9-]+)+"
+        r")"
+    )
+
+    def fix_email(match):
+        local = match.group("local")
+
+        domain = re.sub(
+            r"\s*\.\s*",
+            ".",
+            match.group("domain")
+        )
+
+        return f"{local}@{domain}"
+
+    return email_pattern.sub(
+        fix_email,
+        text
+    )
+
+
 # PDF 파일에서 텍스트 추출
 def parse_pdf(file):
     if not isinstance(file, (str, Path)):
@@ -36,6 +73,10 @@ def parse_pdf(file):
         page_text = page.extract_text()
 
         if page_text:
+            page_text = clean_pdf_text(
+                page_text
+            )
+
             pages.append(page_text)
 
     return "\n".join(pages)
@@ -100,6 +141,7 @@ def parse_docx(file):
 
     return "\n".join(texts)
 
+
 # 파일 형식을 확인하고 텍스트 추출
 def parse_document(file):
     # 로컬 파일 경로인 경우
@@ -129,10 +171,18 @@ def parse_document(file):
 
     # 텍스트를 하나도 추출하지 못한 경우
     if not text.strip():
-        raise ValueError("문서에서 텍스트를 추출하지 못했습니다.")
+        raise ValueError(
+            "문서에서 텍스트를 추출하지 못했습니다."
+        )
 
     # 운영체제에 따라 다른 줄바꿈을 \n으로 통일
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = text.replace(
+        "\r\n",
+        "\n"
+    ).replace(
+        "\r",
+        "\n"
+    )
 
     return {
         "filename": filename,
