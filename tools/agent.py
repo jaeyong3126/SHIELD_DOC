@@ -80,9 +80,6 @@ SYSTEM_PROMPT = """
 
 # =========================================================
 # 3. Pipeline 분석 결과 정리
-#
-# 원문 text는 OpenAI에 전달하지 않음
-# 정책 중복 제거는 filesearch.py에서 수행
 # =========================================================
 
 def build_analysis_context(doc):
@@ -101,7 +98,6 @@ def build_analysis_context(doc):
     if not isinstance(refs, list):
         refs = []
 
-    # 검색 결과 자체의 중복 제거는 filesearch.py 담당
     # Agent에서는 토큰 방지를 위해 최대 3개만 사용
     policy_for_ai = {
         "refs": refs[:MAX_POLICY_REFS]
