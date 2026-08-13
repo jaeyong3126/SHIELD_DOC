@@ -15,6 +15,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5")
 
 # OpenAI에 전달할 정책 근거 최대 개수
+# 검색 횟수 및 중복 제거는 filesearch.py에서 처리
 MAX_POLICY_REFS = 3
 
 
@@ -78,59 +79,10 @@ SYSTEM_PROMPT = """
 
 
 # =========================================================
-# 3. 정책 결과 중복 제거
-# =========================================================
-
-def _deduplicate_policy_refs(policy):
-    if not isinstance(policy, dict):
-        return {"refs": []}
-
-    refs = policy.get("refs", [])
-
-    if not isinstance(refs, list):
-        return {"refs": []}
-
-    unique_refs = []
-    seen = set()
-
-    for ref in refs:
-        if not isinstance(ref, dict):
-            continue
-
-        title = str(ref.get("title", "")).strip()
-        snippet = str(ref.get("snippet", "")).strip()
-        source = str(ref.get("source", "")).strip()
-
-        # 제목 + 출처 기준 중복 제거
-        key = (
-            title.lower(),
-            source.lower()
-        )
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        unique_refs.append({
-            "title": title,
-            "snippet": snippet,
-            "source": source,
-        })
-
-        # OpenAI에는 최대 3개의 정책 근거만 전달
-        if len(unique_refs) >= MAX_POLICY_REFS:
-            break
-
-    return {
-        "refs": unique_refs
-    }
-
-
-# =========================================================
-# 4. Pipeline 분석 결과 정리
+# 3. Pipeline 분석 결과 정리
 #
-# 원문 text는 토큰 절감을 위해 OpenAI에 전달하지 않음
+# 원문 text는 OpenAI에 전달하지 않음
+# 정책 중복 제거는 filesearch.py에서 수행
 # =========================================================
 
 def build_analysis_context(doc):
@@ -139,22 +91,34 @@ def build_analysis_context(doc):
             "analyze_final 입력값은 dict 형식이어야 합니다."
         )
 
-    policy = _deduplicate_policy_refs(
-        doc.get("policy", {"refs": []})
-    )
+    policy = doc.get("policy", {"refs": []})
+
+    if not isinstance(policy, dict):
+        policy = {"refs": []}
+
+    refs = policy.get("refs", [])
+
+    if not isinstance(refs, list):
+        refs = []
+
+    # 검색 결과 자체의 중복 제거는 filesearch.py 담당
+    # Agent에서는 토큰 방지를 위해 최대 3개만 사용
+    policy_for_ai = {
+        "refs": refs[:MAX_POLICY_REFS]
+    }
 
     return {
         "filename": doc.get("filename", ""),
         "pii_found": doc.get("pii_found", []),
         "secret_found": doc.get("secret_found", []),
         "ml": doc.get("ml", {}),
-        "policy": policy,
+        "policy": policy_for_ai,
         "risk": doc.get("risk", {}),
     }
 
 
 # =========================================================
-# 5. 차단 문서용 OpenAI Prompt
+# 4. 차단 문서용 OpenAI Prompt
 # =========================================================
 
 def _build_user_prompt(context):
@@ -201,11 +165,12 @@ Risk Engine의 score와 action을 그대로 표시한다.
 - 새로운 보안 판정을 만들지 않는다.
 - 새로운 근거를 만들어내지 않는다.
 - Risk Engine의 score와 action을 변경하지 않는다.
+- 제공된 policy.refs 이외의 정책을 언급하지 않는다.
 """
 
 
 # =========================================================
-# 6. OpenAI Token Usage 출력
+# 5. OpenAI Token Usage 출력
 # =========================================================
 
 def _print_token_usage(response):
@@ -230,9 +195,9 @@ def _print_token_usage(response):
 
 
 # =========================================================
-# 7. 허용 문서 설명
+# 6. 허용 문서 설명
 #
-# OpenAI API를 호출하지 않음 → 토큰 사용 0
+# OpenAI API 호출 없음 → 토큰 사용 0
 # =========================================================
 
 def _build_allow_explanation(context):
@@ -253,6 +218,20 @@ def _build_allow_explanation(context):
     if not reason_text:
         reason_text = "- 특이사항 없음"
 
+    # 위험 요소가 전혀 없는 정상 문서
+    if score == 0:
+        recommendation = (
+            "현재 분석 결과 추가 확인이 필요한 "
+            "위험 요소는 확인되지 않았습니다."
+        )
+
+    # 일부 저위험 요소는 있지만 차단 기준 미달
+    else:
+        recommendation = (
+            "차단 기준에는 미달하였으나 탐지된 항목이 있으므로 "
+            "외부 반출 전 내용을 확인하는 것을 권장합니다."
+        )
+
     return f"""[분석 요약]
 해당 문서는 현재 보안 분석 결과 외부 반출이 허용되었습니다.
 
@@ -263,11 +242,11 @@ def _build_allow_explanation(context):
 위험도 {score}점 / 반출 허용
 
 [권고 조치]
-현재 판정 기준상 별도의 차단 조치는 필요하지 않습니다."""
+{recommendation}"""
 
 
 # =========================================================
-# 8. Pipeline에서 호출하는 최종 함수
+# 7. Pipeline에서 호출하는 최종 함수
 # =========================================================
 
 def analyze_final(doc):
@@ -282,22 +261,21 @@ def analyze_final(doc):
         → 상세 차단 사유 설명
     """
 
-    # Pipeline 결과 정리
     context = build_analysis_context(doc)
 
     risk = context.get("risk", {})
     action = risk.get("action", "")
 
-    # -----------------------------------------------------
-    # 허용 문서 → OpenAI 호출하지 않음
-    # -----------------------------------------------------
+    # =====================================================
+    # 허용 문서
+    # =====================================================
 
     if action == "허용":
         return _build_allow_explanation(context)
 
-    # -----------------------------------------------------
-    # 차단 문서 → OpenAI 호출
-    # -----------------------------------------------------
+    # =====================================================
+    # 차단 문서
+    # =====================================================
 
     if action == "차단":
         client = _get_client()
@@ -309,19 +287,20 @@ def analyze_final(doc):
             instructions=SYSTEM_PROMPT,
             input=user_prompt,
 
-            # 대화 상태 저장 불필요
+            # 멀티턴 대화 상태 저장 불필요
             store=False,
 
-            # 설명 작업이므로 추론량 낮춤
+            # 결과 설명 작업이므로 낮은 추론 수준 사용
+            # gpt-5 / gpt-5.5 모두 호환
             reasoning={
                 "effort": "low"
             },
 
-            # reasoning + 실제 답변의 전체 출력 상한
+            # reasoning + 실제 출력 전체 상한
             max_output_tokens=1600,
         )
 
-        # 차단 문서에서만 Token Usage 출력
+        # 차단 문서에서만 토큰 사용량 출력
         _print_token_usage(response)
 
         explanation = response.output_text
@@ -333,9 +312,9 @@ def analyze_final(doc):
 
         return explanation.strip()
 
-    # -----------------------------------------------------
-    # Risk Engine 결과가 비정상인 경우
-    # -----------------------------------------------------
+    # =====================================================
+    # Risk Engine 결과 비정상
+    # =====================================================
 
     raise RuntimeError(
         f"알 수 없는 Risk Engine action입니다: {action}"
