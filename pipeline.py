@@ -13,9 +13,9 @@ SHIELD_DOC - 전체 파이프라인 (뼈대) v3
   실행 → 상태표에서 자기 이름 찾기 → 이 파일에서 dummy_함수이름 검색
   → 그 반환값이 곧 입출력 정답지입니다. 키 이름을 똑같이 맞춰주세요.
 
-실행:  python pipeline_v3.py            (data/ 안의 샘플 파일 1건으로 한 바퀴)
-       python pipeline_v3.py 파일경로   (실제 파일로 한 바퀴)
-       python pipeline_v3.py 파일1 파일2 ...   (여러 건 = batch)
+실행:  python pipeline.py            (data/ 안의 샘플 파일 1건으로 한 바퀴)
+       python pipeline.py 파일경로   (실제 파일로 한 바퀴)
+       python pipeline.py 파일1 파일2 ...   (여러 건 = batch)
 
 =============================================================================
 [v2 → v3 변경점]  (최재용)
@@ -741,7 +741,7 @@ analyze_final        = _analyze_final        or dummy_analyze_final
 # =============================================================
 # 4) 메인 흐름
 #    정은환: app.py 에서 이것만 부르면 됩니다.
-#            from pipeline_v3 import run_pipeline
+#            from pipeline import run_pipeline
 #            result = run_pipeline(uploaded_file)   # dict 반환
 # =============================================================
 
@@ -954,7 +954,7 @@ def _print_status():
         mark = "O" if state.startswith("REAL") else ("!" if state.startswith("ERROR") else "-")
         print(f" [{mark}] {name:<22} {state}")
     if _risk_engine is None:
-        print("     ※ risk_engine은 pipeline_v3.py 안의 임시 버전이 동작 중입니다 (최재용)")
+        print("     ※ risk_engine은 pipeline.py 안의 임시 버전이 동작 중입니다 (최재용)")
     for 메모 in _기준메모:
         print(f"     {메모}")
     print("=" * 60)
@@ -1004,7 +1004,7 @@ if __name__ == "__main__":
         대상 = args[0] if args else _샘플파일()
         if 대상 is None:
             print(f"\n샘플 파일을 찾지 못했습니다 ({_샘플폴더})")
-            print("파일 경로를 인자로 주세요:  python pipeline_v3.py 파일경로")
+            print("파일 경로를 인자로 주세요:  python pipeline.py 파일경로")
             sys.exit(1)
         if not args:
             print(f"\n(인자 없음 → 샘플 파일 사용: {대상})")
