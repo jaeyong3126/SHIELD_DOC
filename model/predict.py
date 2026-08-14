@@ -21,8 +21,7 @@ import joblib
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from train import (MODEL_PATH, THRESHOLD, LABEL_NAMES, EVIDENCE_TOP_K,
-                   RULE_CONFIDENCE)
+from train import (MODEL_PATH, THRESHOLD, LABEL_NAMES, EVIDENCE_TOP_K,EVIDENCE_MIN_WEIGHT,RULE_CONFIDENCE)
 
 _ARTIFACT = None
 
@@ -92,7 +91,7 @@ def _extract_evidence(tfidf, clf, vec, top_k=EVIDENCE_TOP_K):
     contrib = vec.toarray()[0] * coef
     idx = np.argsort(contrib)[::-1][:top_k]
     return [{'term': str(names[i]), 'weight': round(float(contrib[i]), 4)}
-            for i in idx if contrib[i] > 0]
+            for i in idx if contrib[i] >= EVIDENCE_MIN_WEIGHT]
 
 
 def predict_confidential(text):
