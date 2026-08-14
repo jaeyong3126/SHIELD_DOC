@@ -12,9 +12,9 @@ transformers
 torch
 
 # ML 모델 - 이서영
-scikit-learn==1.8.0
-pandas==3.0.2
-joblib==1.4.2
+scikit-learn==1.9.0
+pandas==3.0.5
+joblib==1.5.3
 
 # OpenAI - 조정인, 윤경은
 openai
