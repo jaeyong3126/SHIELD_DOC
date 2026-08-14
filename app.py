@@ -13,7 +13,3 @@ pg = st.navigation([
 ])
 
 pg.run()
-
-
-
-st.write("임시 테스트")
