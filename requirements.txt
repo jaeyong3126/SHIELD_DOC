@@ -3,18 +3,18 @@
 
 # 화면 - 정은환
 streamlit
+torchvision
 
 # 문서 파싱 - 한지웅
 python-docx
 pypdf
-transformers
+transformers==4.57.1
 torch
 
 # ML 모델 - 이서영
-scikit-learn
-pandas
-numpy
-joblib
+scikit-learn==1.9.0
+pandas==3.0.5
+joblib==1.5.3
 
 # OpenAI - 조정인, 윤경은
 openai

@@ -217,6 +217,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 data/raw/
+
 .env
 
 # 개인용 Vector Store 설정 파일
