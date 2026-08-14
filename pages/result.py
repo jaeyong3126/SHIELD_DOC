@@ -113,12 +113,15 @@ if analyze_result_json:
 
         # 탭 3: 기업 정책 위반 (policy)
         with policy_tab:
-            st.subheader("기업 보안 정책 검사 결과")
-            pol_data = data.get("policy", {})
-            if pol_data:
-                st.json(pol_data)
+            st.subheader("기업 보안 정책 위반 결과")
+
+            refs = (data.get("policy") or {}).get("refs") or []
+
+            if refs:
+                st.error(f"기업 정책 위반 {len(refs)}건 확인")
+                st.write(refs)
             else:
-                st.info("정책 위반 내역이 없습니다.")
+                st.success("확인된 기업 정책 위반 없음")
 
         # 탭 4: 최종 위험 점수 및 사유 (risk)
         with final_score_tab:
