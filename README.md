@@ -31,8 +31,36 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
 
 #### 실행 결과(여기다 테스트 영상 만드시면서 스크린샷 넣어주세요..)
 - 초기 화면
+
+<img width="1160" height="941" alt="main" src="https://github.com/user-attachments/assets/013f35fd-a8d7-41af-8750-3a2aa23e16a2" />
+
 - 문서 업로드 시
-- 개인정보 탐지 결과 등등 볼 수 있는 ui는 다 넣어주세요
+
+<img width="1161" height="948" alt="file_upload" src="https://github.com/user-attachments/assets/46ab44c8-00ba-4485-bd23-d17f2f56eced" />
+
+- 결과 화면
+
+<img width="1156" height="706" alt="analyze_result" src="https://github.com/user-attachments/assets/62787329-620e-477d-b4a9-6ae3489ca897" />
+
+- 개인정보 탐지
+
+<img width="990" height="398" alt="pii_result" src="https://github.com/user-attachments/assets/b75b1afd-11c8-46fd-939e-a7fe60f4d068" />
+
+- 기밀정보 탐지
+
+<img width="1018" height="795" alt="secret_result" src="https://github.com/user-attachments/assets/156294b5-ee38-4c19-83f1-dc6472aa83c6" />
+
+- 정책 위반 탐지
+
+<img width="1001" height="697" alt="policy_result" src="https://github.com/user-attachments/assets/dfe93a09-3015-4e41-a578-3d359140cbd4" />
+
+- 최종 점수
+
+<img width="999" height="540" alt="risk_score_result" src="https://github.com/user-attachments/assets/5c43dc8f-7f24-4106-ae81-394ffd26c604" />
+
+- AI 종합 요약
+
+<img width="1023" height="746" alt="AI_summary" src="https://github.com/user-attachments/assets/1a0e26a3-3ec1-4007-a9cc-b51c0b7fa137" />
 
 ---
 
