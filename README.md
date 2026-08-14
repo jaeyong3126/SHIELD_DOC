@@ -61,6 +61,9 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
 - AI 종합 요약
 
 <img width="1023" height="746" alt="AI_summary" src="https://github.com/user-attachments/assets/1a0e26a3-3ec1-4007-a9cc-b51c0b7fa137" />
+=======
+- 문서 업로드 시
+- 개인정보 탐지 결과 등등 볼 수 있는 ui는 다 넣어주세요
 
 ---
 
@@ -93,6 +96,7 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
 - 팀에서 정의한 개인정보·인증정보·기술정보 등의 보호 기준을 바탕으로 **가상기업 ‘한빛반도체’의 외부 정보 반출 보안정책 12개 조항**을 구성하고, 정책 PDF를 OpenAI Vector Store에 연동
 - PII·Secret이 마스킹된 문서를 OpenAI File Search로 검색하여 **단순 관련 정책이 아닌 실제 위반 조항만 선별**하고, `title·snippet·source` 구조의 정책 근거(`refs`)를 최대 3건까지 반환
 - 정책 위반 없음(`refs=[]`)과 API·JSON 검색 실패를 구분하도록 예외 처리하고, `result.py`에서 빈 배열 대신 **‘정책 위반 없음’으로 표시**하도록 개선했으며, `reasoning effort=low`와 Tool 호출 제한을 통해 토큰 사용량 최적화
+=======
 
 ---
 
