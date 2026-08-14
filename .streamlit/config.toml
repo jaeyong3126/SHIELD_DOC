@@ -1,0 +1,20 @@
+# Streamlit 실행 설정 (최재용)
+#
+# fileWatcherType = "none"
+#   Streamlit은 코드 변경 감지를 위해 로드된 모든 모듈의 경로를 훑는데,
+#   transformers가 지연 로딩 구조라 그 과정에서 이미지·영상 처리 모듈 수십 개가
+#   딸려 들어옵니다. 그것들이 torchvision을 찾다가 실패하면서
+#   터미널에 ModuleNotFoundError 트레이스백이 수백 줄 쏟아집니다.
+#
+#   SHIELD_DOC은 텍스트만 다루므로 그 모듈들은 하나도 쓰지 않습니다.
+#   감시기를 끄면 로그가 사라지고 시작도 조금 빨라집니다.
+#
+#   ※ 대신 코드를 고쳐도 브라우저가 자동 새로고침되지 않습니다.
+#     수정 후에는 터미널에서 Ctrl+C로 끄고 다시 실행하세요.
+#     (개발 중 자동 새로고침이 필요하면 이 줄만 주석 처리하면 됩니다)
+
+[server]
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
