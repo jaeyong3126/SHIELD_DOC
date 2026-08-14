@@ -12,7 +12,7 @@ transformers
 torch
 
 # ML 모델 - 이서영
-scikit-learn==1.8.0
+scikit-learn==1.9.0
 pandas==3.0.2
 joblib==1.4.2
 
