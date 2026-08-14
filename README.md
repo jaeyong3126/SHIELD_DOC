@@ -7,6 +7,7 @@ SHIELD_DOC/
 ├── requirements.txt            ← 전원 (새 패키지 쓰면 본인이 추가)
 ├── .env                        ← 각자 로컬에만 (API 키, 커밋 금지)
 ├── .env.example                ← 최재용 (키 이름 껍데기만)
+├── setup_vector_store.py       ← 윤경은 (Vector Store 생성 및 정책 pdf 업로드)
 │
 ├── data/
 │   ├── raw/                    ← 최율호 (원본 문서 — git 제외, 드라이브가 원본)
