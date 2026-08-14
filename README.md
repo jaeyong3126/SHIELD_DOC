@@ -82,7 +82,11 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
   | 기밀 형식 + 공개 내용 | 기술 사양서 형식이나 교육용 공개 데이터 |
 
 **여기다 자신이 개발한 모듈 설명 개조식으로 한 2,3문장정도 적어주세요**
+### OpenAI Agent 기반 최종 보안 분석 모듈
 
+- OpenAI Responses API와 File Search를 연동하여 **PII·Secret·ML 기밀 분류·정책 검색·Risk Engine 결과를 종합한 최종 보안 분석 설명** 생성
+- Risk Engine의 Score/Action과 ML 결과를 재판단하지 않도록 System Prompt를 구성하고, **탐지되지 않은 개인정보·Secret·정책의 임의 생성을 제한하여 Hallucination 방지**
+- 허용 문서는 고정 설명을 반환하고 차단 문서에만 OpenAI API를 호출하며, **문서 원문 미전송·정책 근거 최대 3건 제한·Token Usage 모니터링**을 통해 보안성과 API 비용 최적화
 ---
 
 ## 시스템 실행 방법
