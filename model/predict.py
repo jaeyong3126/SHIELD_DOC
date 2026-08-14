@@ -13,6 +13,7 @@
 설정값(MODEL_PATH, THRESHOLD 등)은 train.py에서 그대로 가져온다.
 학습과 추론이 같은 값을 쓰도록 한 곳(train.py)에서만 정의한다.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -20,9 +21,30 @@ import joblib
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from train import (MODEL_PATH, THRESHOLD, LABEL_NAMES, EVIDENCE_TOP_K)
+from train import (MODEL_PATH, THRESHOLD, LABEL_NAMES, EVIDENCE_TOP_K,
+                   RULE_CONFIDENCE)
 
 _ARTIFACT = None
+
+# =============================================================
+# 규칙 계층
+#   문서 단위 TF-IDF는 "평범한 문서 + 기밀 한 문장" 유형을 놓친다.
+#   (본문의 95%가 일상 어휘라 기밀 문장이 희석됨)
+#   아래는 작성자가 직접 비밀임을 명시한 표현만 잡는다. 기술 어휘가
+#   아니라 메타 신호이므로 정상 문서에 나올 가능성이 낮다.
+#   edge holdout 기준 기밀 6건 추가 탐지, 오탐 2건 (recall 0.841 -> 0.937).
+# =============================================================
+CONFIDENTIAL_MARKERS = [
+    r'대외\s*(발표|공시)\s*전',
+    r'외부\s*(발설|유출|언급)',
+    r'언급\s*(삼가|마시)',
+    r'보안\s*주의',
+    r'취급\s*주의',
+    r'이사회\s*통과\s*전',
+    r'확정\s*전',
+    r'대외\s*언급',
+]
+_MARKER_RE = re.compile('|'.join(CONFIDENTIAL_MARKERS))
 
 
 def _load():
@@ -40,6 +62,18 @@ def _load():
 def _empty(version):
     return {'label': 0, 'label_name': LABEL_NAMES[0], 'confidence': 0.0,
             'evidence': [], 'model_version': version}
+
+
+def _find_markers(text):
+    """비밀 유지 지시 표현을 찾아 evidence 형태로 반환.
+    weight 1.0은 '규칙이 확정한 근거'라는 뜻 (ML 기여도와 구분된다)."""
+    seen, out = set(), []
+    for m in _MARKER_RE.finditer(text):
+        term = m.group(0).strip()
+        if term not in seen:
+            seen.add(term)
+            out.append({'term': term, 'weight': 1.0})
+    return out
 
 
 def _extract_evidence(tfidf, clf, vec, top_k=EVIDENCE_TOP_K):
@@ -79,10 +113,27 @@ def predict_confidential(text):
 
     # confidence = P(기밀). risk_engine의 0.8 컷과 연동되도록 확률을 그대로 쓴다.
     # 정상 문서는 자연히 낮은 값을 갖는다.
+    confidence = prob
+    markers = _find_markers(text)
+
+    if markers and label == 0:
+        # ML이 놓친 경우에만 규칙이 승격시킨다 (ML 판정은 덮지 않는다).
+        # 근거가 명시적이므로 confidence를 RULE_CONFIDENCE로 올려
+        # risk_engine이 충분한 가중치를 주도록 한다.
+        label = 1
+        confidence = max(prob, RULE_CONFIDENCE)
+
+    if label == 1:
+        # 규칙이 잡은 문구를 앞에 둔다 (사람이 읽을 수 있는 근거).
+        evidence = markers + _extract_evidence(art['tfidf'], art['clf'], vec)
+        evidence = evidence[:EVIDENCE_TOP_K]
+    else:
+        evidence = []
+
     return {
         'label': label,
         'label_name': LABEL_NAMES[label],
-        'confidence': round(prob, 4),
-        'evidence': _extract_evidence(art['tfidf'], art['clf'], vec) if label == 1 else [],
+        'confidence': round(confidence, 4),
+        'evidence': evidence,
         'model_version': version,
     }
