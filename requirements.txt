@@ -3,6 +3,7 @@
 
 # 화면 - 정은환
 streamlit
+torchvision
 
 # 문서 파싱 - 한지웅
 python-docx
