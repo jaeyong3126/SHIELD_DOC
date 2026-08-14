@@ -19,7 +19,7 @@ from sklearn.svm import LinearSVC
 # CONFIG — 값이 바뀌면 여기만 고친다 
 # =============================================================
 ROOT = Path(__file__).resolve().parents[1]
-DATA_PATH = ROOT / 'data' / 'final_datasets_2.csv'
+DATA_PATH = ROOT / 'data' / 'final_datasets.csv'
 MODEL_PATH = ROOT / 'model' / 'model.joblib'
 
 # 앞 모듈(parser/pii)이 형태소 처리해 넘겨주는 컬럼.
