@@ -52,7 +52,7 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
 
 - 정책 위반 탐지
 
-<img width="1001" height="697" alt="policy_result" src="https://github.com/user-attachments/assets/dfe93a09-3015-4e41-a578-3d359140cbd4" />
+<img width="1740" height="835" alt="policy_result_v2" src="https://github.com/user-attachments/assets/b2c006c1-9c5c-4836-af74-77b8e5ac8f11" />
 
 - 최종 점수
 
@@ -61,11 +61,8 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
 - AI 종합 요약
 
 <img width="1023" height="746" alt="AI_summary" src="https://github.com/user-attachments/assets/1a0e26a3-3ec1-4007-a9cc-b51c0b7fa137" />
-=======
-- 문서 업로드 시
-- 개인정보 탐지 결과 등등 볼 수 있는 ui는 다 넣어주세요
 
----
+=======
 
 ## 주요 기능
 
