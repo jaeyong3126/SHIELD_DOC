@@ -236,4 +236,4 @@ edge holdout(150건, 기밀 63건) 기준 성능은 다음과 같다.
 | 윤경은 | 기업 반출 정책 제작, File Search |
 | 조정인 | PII, ML, Risk Engine 종합 결과 연동, AI 종합 분석 |
 | 정은환 | Streamlit UI |
-| 최율호 | 데이터셋 구축·전처리 |
+| 최율호 | 데이터셋 구축·전처리, EDA 분석 및 시각화 |
