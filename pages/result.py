@@ -152,9 +152,28 @@ if analyze_result_json:
 
             refs = (data.get("policy") or {}).get("refs") or []
 
+            # if refs:
+            #     st.error(f"기업 정책 위반 {len(refs)}건 확인")
+            #     st.text_area(refs)
+            # else:
+            #     st.success("확인된 기업 정책 위반 없음")
             if refs:
                 st.error(f"기업 정책 위반 {len(refs)}건 확인")
-                st.write(refs)
+                for idx, item in enumerate(refs, 1):
+                    # 1) refs가 단순 문자열 리스트인 경우
+                    if isinstance(item, str):
+                        st.markdown(f"**{idx}.** {item}")
+                        
+                    # 2) refs가 dict 구조인 경우 (예: {'rule': '개인정보 유출', 'detail': '주민번호 포함'})
+                    elif isinstance(item, dict):
+                        rule_name = item.get("rule") or item.get("title") or f"위반 항목 #{idx}"
+                        with st.expander(f"🚨 {rule_name}", expanded=True):
+                            for k, v in item.items():
+                                st.markdown(f"- **{k}**: {v}")
+
+                    # st.dataframe(refs, use_container_width=True)
+
+                    # st.json(refs, expanded=True)
             else:
                 st.success("확인된 기업 정책 위반 없음")
 
