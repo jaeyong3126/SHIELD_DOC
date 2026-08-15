@@ -48,7 +48,7 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
 
 - 기밀정보 탐지
 
-<img width="1018" height="795" alt="secret_result" src="https://github.com/user-attachments/assets/156294b5-ee38-4c19-83f1-dc6472aa83c6" />
+<img width="1708" height="768" alt="secret_result_v2" src="https://github.com/user-attachments/assets/c1cd9280-7991-4e18-a8d2-5f656c243661" />
 
 - 정책 위반 탐지
 
