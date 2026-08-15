@@ -98,7 +98,7 @@ if analyze_result_json:
         with secret_tab:
             st.subheader("기밀 정보 및 ML 판단 결과")
             sec_col, ml_col = st.columns(2)
-            
+            # Secret 탐지
             with sec_col:
                 st.markdown("**🔑 탐지된 비밀번호 / API Key (Secret)**")
                 sec_list = data.get("secret_found", [])
@@ -106,10 +106,45 @@ if analyze_result_json:
                     st.dataframe(sec_list, width="stretch")
                 else:
                     st.info("탐지된 Secret 키가 없습니다.")
-            
+
+            # 기밀 탐지
             with ml_col:
                 st.markdown("**🤖 ML 기밀 문서 분류**")
-                st.json(data.get("ml", {}))
+                st.text("test")
+                ml = data.get("ml", {}) or {}
+                conf = float(ml.get("confidence", 0))
+
+                # 확신도에 따라 3단계로 구분
+                # 0.8은 risk_engine이 단독 차단 여부를 가르는 기준과 동일하다
+                if ml.get("label") == 1 and conf >= 0.8:
+                    st.markdown("<h4 style='color:#E74C3C; margin:0;'>기밀 문서</h4>", unsafe_allow_html=True)
+                    st.caption(f"기밀 확률 {conf:.0%} · 기밀 정보 포함 가능성이 높습니다")
+                elif ml.get("label") == 1:
+                    st.markdown("<h4 style='color:#E67E22; margin:0;'>기밀 의심</h4>", unsafe_allow_html=True)
+                    st.caption(f"기밀 확률 {conf:.0%} · 검토가 필요합니다")
+                else:
+                    st.markdown("<h4 style='color:#2ECC71; margin:0;'>일반 문서</h4>", unsafe_allow_html=True)
+                    st.caption(f"기밀 확률 {conf:.0%}")
+
+                evidence = ml.get("evidence") or []
+                if evidence:
+                    st.markdown("---")
+                    st.markdown("**🔍 주요 판단 근거 (비율)**")
+                    
+                    # 1. 전체 가중치 합계 산출
+                    total_weight = sum(float(e.get("weight", 0)) for e in evidence)
+                    
+                    if total_weight > 0:
+                        for e in evidence:
+                            weight_val = float(e.get("weight", 0))
+                            # 2. 전체 중 이 단어가 차지하는 비중(0.0 ~ 1.0)
+                            share = weight_val / total_weight 
+                            
+                            # 3. 레이아웃 배치 (단어 / 진행바 / 퍼센트)
+                            c1, c2, c3 = st.columns([2, 4, 1])
+                            c1.markdown(f"`{e['term']}`")
+                            c2.progress(share)
+                            c3.caption(f"**{share:.0%}**") # 45% 형태로 표시 (소수점 원하면 {share:.1%} 사용)
 
         # 탭 3: 기업 정책 위반 (policy)
         with policy_tab:
