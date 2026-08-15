@@ -233,7 +233,8 @@ edge holdout(150건, 기밀 63건) 기준 성능은 다음과 같다.
 | Language | Python |
 | UI | Streamlit |
 | Machine Learning | scikit-learn |
-| Data Processing | pandas |
+| Data Processing | pandas, KoNLPy (Okt) |
+| EDA & Visualization | Matplotlib, Seaborn |
 | Model Serialization | joblib |
 | LLM | OpenAI API |
 | Collaboration | Git, GitHub, Notion, Google Drive |
