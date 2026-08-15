@@ -407,12 +407,28 @@ def _본문검사(text):
         raise ValueError("본문이 비어 있습니다 (이미지만 있는 PDF이거나 파싱에 실패했을 수 있습니다)")
 
 
+def _명시적_빈결과(value):
+    """
+    '탐지된 것이 없다'는 정상 응답인지 판별한다. 빈 목록([] 또는 {})만 인정한다.
+    None이나 규격 밖 타입은 "없다"가 아니라 "해석하지 못했다"로 본다.
+    """
+    return isinstance(value, (list, tuple, set, dict)) and len(value) == 0
+
+
 def _unwrap_detect(value, field, owner, current_text):
     """
     탐지 함수 출력에서 (탐지목록, 마스킹된본문) 을 꺼낸다.
     두 가지 반환 방식을 모두 허용:
       (A) {"pii_found": [...], "masked_text": "..."}   ← 권장 (마스킹 포함)
       (B) [...]                                        ← 목록만 (마스킹 없음)
+
+    ※ 규격을 벗어난 값이 와서 목록을 해석하지 못했을 때는 '탐지 0건'으로 넘기지 않는다.
+      _norm_list가 그런 값을 조용히 []로 만들기 때문에, 그대로 두면
+      "개인정보 없는 깨끗한 문서"와 구분되지 않아 원문이 그대로
+      외부 API(search_policy)·화면·세션 JSON으로 나간다.
+      해석 실패는 마스킹 실패(None)로 돌려서 호출부가 차단으로 올리게 한다.
+      (v3: detect_pii가 예외를 던지면 안전하게 차단되는데 형식만 틀리면
+       원문이 새던 비대칭을 바로잡음)
     """
     if isinstance(value, dict):
         found = value.get(field)
@@ -436,12 +452,22 @@ def _unwrap_detect(value, field, owner, current_text):
         if items:
             _warn(f"{field}: 탐지 결과는 있는데 masked_text가 없습니다 → 본문 비공개 처리 ({owner})")
             return items, None      # None = 마스킹 실패 (호출부가 처리)
+
+        if not _명시적_빈결과(found):
+            _warn(f"{field}: 규격을 벗어난 값이라 탐지 결과를 해석하지 못했습니다 → 본문 비공개 처리 "
+                  f"({owner}: 탐지된 게 없을 땐 [] 를 반환해주세요)")
+            return items, None
         return items, current_text
 
     # 목록만 반환한 경우 - 마스킹 기능이 아직 없는 상태
     items = _norm_list(value, field, owner)
     if items:
         _warn(f"{field}: masked_text가 없습니다 → 본문 비공개 처리 ({owner}: 마스킹본을 같이 반환해주세요)")
+        return items, None
+
+    if not _명시적_빈결과(value):
+        _warn(f"{field}: 규격을 벗어난 값이라 탐지 결과를 해석하지 못했습니다 → 본문 비공개 처리 "
+              f"({owner}: 탐지된 게 없을 땐 [] 를 반환해주세요)")
         return items, None
     return items, current_text
 
