@@ -87,6 +87,13 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
 - OpenAI Responses API와 File Search를 연동하여 **PII·Secret·ML 기밀 분류·정책 검색·Risk Engine 결과를 종합한 최종 보안 분석 설명** 생성
 - Risk Engine의 Score/Action과 ML 결과를 재판단하지 않도록 System Prompt를 구성하고, **탐지되지 않은 개인정보·Secret·정책의 임의 생성을 제한하여 Hallucination 방지**
 - 허용 문서는 고정 설명을 반환하고 차단 문서에만 OpenAI API를 호출하며, **문서 원문 미전송·정책 근거 최대 3건 제한·Token Usage 모니터링**을 통해 보안성과 API 비용 최적화
+
+#### 정책 조항 검색 모듈
+
+- 팀에서 정의한 개인정보·인증정보·기술정보 등의 보호 기준을 바탕으로 **가상기업 ‘한빛반도체’의 외부 정보 반출 보안정책 12개 조항**을 구성하고, 정책 PDF를 OpenAI Vector Store에 연동
+- PII·Secret이 마스킹된 문서를 OpenAI File Search로 검색하여 **단순 관련 정책이 아닌 실제 위반 조항만 선별**하고, `title·snippet·source` 구조의 정책 근거(`refs`)를 최대 3건까지 반환
+- 정책 위반 없음(`refs=[]`)과 API·JSON 검색 실패를 구분하도록 예외 처리하고, `result.py`에서 빈 배열 대신 **‘정책 위반 없음’으로 표시**하도록 개선했으며, `reasoning effort=low`와 Tool 호출 제한을 통해 토큰 사용량 최적화
+
 ---
 
 ## 시스템 실행 방법
