@@ -149,14 +149,8 @@ if analyze_result_json:
         # 탭 3: 기업 정책 위반 (policy)
         with policy_tab:
             st.subheader("기업 보안 정책 위반 결과")
-
+            # 정책 위반 결과 가져오기
             refs = (data.get("policy") or {}).get("refs") or []
-
-            # if refs:
-            #     st.error(f"기업 정책 위반 {len(refs)}건 확인")
-            #     st.text_area(refs)
-            # else:
-            #     st.success("확인된 기업 정책 위반 없음")
             if refs:
                 st.error(f"기업 정책 위반 {len(refs)}건 확인")
                 for idx, item in enumerate(refs, 1):
@@ -170,10 +164,6 @@ if analyze_result_json:
                         with st.expander(f"🚨 {rule_name}", expanded=True):
                             for k, v in item.items():
                                 st.markdown(f"- **{k}**: {v}")
-
-                    # st.dataframe(refs, use_container_width=True)
-
-                    # st.json(refs, expanded=True)
             else:
                 st.success("확인된 기업 정책 위반 없음")
 
