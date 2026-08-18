@@ -146,8 +146,12 @@ SK 쉴더스 루키즈 1차 모듈 프로젝트
     python -m pip install -r requirements.txt
 ```
 5. `.env.example`을 참고해 `.env` 생성 후 API 키 입력
-
-6. `app.py` 실행
+6. Vector Store 최초 설정
+```bash
+    python tools/setup_vector_store.py
+```
+7. 실행 결과로 출력된 VECTOR_STORE_ID를 .env에 입력
+8. `app.py` 실행
 ```bash
     python -m streamlit run app.py
 ```
